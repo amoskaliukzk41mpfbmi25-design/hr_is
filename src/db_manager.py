@@ -2,6 +2,7 @@ from contextlib import closing
 import sqlite3, json
 from pathlib import Path
 from docxtpl import DocxTemplate
+from datetime import date
 
 DB_PATH = r"D:/Projects/hr_is/data/hr_system.db"   # перевір, що шлях правильний під твою структуру
 
@@ -22,6 +23,17 @@ def fetch_all(query: str, params: tuple = ()):
         columns = [desc[0] for desc in cur.description]
         rows = [dict(zip(columns, row)) for row in cur.fetchall()]
     return rows
+
+def fetch_one(query: str, params: tuple = ()):
+    """SELECT → один рядок як dict або None."""
+    with closing(get_connection()) as conn, closing(conn.cursor()) as cur:
+        cur.execute(query, params)
+        row = cur.fetchone()
+        if not row:
+            return None
+        columns = [desc[0] for desc in cur.description]
+        return dict(zip(columns, row))
+
 
 
 def execute_query(query: str, params: tuple = ()):
@@ -467,3 +479,57 @@ def suggest_username(email: str, last_name: str, first_name: str) -> str:
         return email.split("@", 1)[0]
     base = (last_name[:10] + "_" + first_name[:1]).lower()
     return base
+
+
+
+
+def today_iso():
+    """Сьогоднішня дата у форматі YYYY-MM-DD."""
+    return date.today().isoformat()
+
+
+def get_next_p1_order_number():
+    """
+    Повертає наступний номер П-1 у форматі 'N/YYYY'.
+    Читаємо останній з documents.context_json → $.order_number.
+    """
+    y = date.today().year
+    row = fetch_one(
+        """
+        SELECT COALESCE(
+            MAX(
+                CAST(
+                    SUBSTR(
+                        json_extract(context_json, '$.order_number'),
+                        1,
+                        INSTR(json_extract(context_json, '$.order_number'), '/') - 1
+                    ) AS INTEGER
+                )
+            ),
+            0
+        ) AS max_seq
+        FROM documents
+        WHERE type = 'P1'
+          AND json_extract(context_json, '$.order_number') LIKE ?
+        """,
+        (f'%/{y}',)
+    )
+    next_seq = (row["max_seq"] if row else 0) + 1
+    return f"{next_seq}/{y}"
+
+
+def order_number_exists_p1(order_no: str) -> bool:
+    """
+    Чи існує вже такий номер у П-1 (у context_json)?
+    """
+    row = fetch_one(
+        """
+        SELECT COUNT(*) AS c
+        FROM documents
+        WHERE type = 'P1'
+          AND json_extract(context_json, '$.order_number') = ?
+        """,
+        (order_no,)
+    )
+    return (row and row["c"] > 0)
+
