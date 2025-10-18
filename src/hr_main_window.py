@@ -5,6 +5,7 @@ import db_manager as db
 from tkinter import messagebox
 from documents_tab import DocumentsTab
 from p1_create_form import P1CreateForm
+from internships_tab import InternshipsTab
 import json
 
 
@@ -28,18 +29,6 @@ class DashboardTab(ctk.CTkFrame):
         for i, card in enumerate((self.kpi_total, self.kpi_hired, self.kpi_dismissed, self.kpi_deps)):
             card.grid(row=0, column=i, padx=10, pady=10, sticky="nsew")
             kpi_wrap.grid_columnconfigure(i, weight=1)
-
-        # Секція швидких дій (низ)
-        actions = ctk.CTkFrame(self, corner_radius=12)
-        actions.pack(fill="x", padx=10, pady=(6, 10))
-
-        btn_add_emp = ctk.CTkButton(actions, text="➕ Додати працівника", width=200, command=self._todo)
-        btn_doc = ctk.CTkButton(actions, text="🧾 Створити документ", width=200, state="disabled")
-        btn_export = ctk.CTkButton(actions, text="📄 Експорт списку", width=200, command=self._todo)
-
-        btn_add_emp.pack(side="left", padx=10, pady=10)
-        btn_doc.pack(side="left", padx=10, pady=10)
-        btn_export.pack(side="left", padx=10, pady=10)
 
         # Завантажити дані KPI
         self.reload_kpis()
@@ -69,10 +58,6 @@ class DashboardTab(ctk.CTkFrame):
         self.kpi_dismissed.value_lbl.configure(text=str(dismissed))
         self.kpi_deps.value_lbl.configure(text=str(deps))
 
-    def _todo(self):
-        # Тимчасовий обробник — пізніше підвʼяжемо реальні дії
-        ctk.CTkMessagebox(title="Пізніше", message="Функція буде реалізована далі.")
-        # Якщо немає CTkMessagebox — заміни на print або зробимо власне діалогове вікно.
 
 class EmployeesTab(ctk.CTkFrame):
     """Таблиця + сортування + пошук + фільтри + панель дій (Edit працює)."""
@@ -153,7 +138,7 @@ class EmployeesTab(ctk.CTkFrame):
         self.tree_scroll_y = ctk.CTkScrollbar(table_frame); self.tree_scroll_y.pack(side="right", fill="y")
         self.tree_scroll_x = ctk.CTkScrollbar(table_frame, orientation="horizontal"); self.tree_scroll_x.pack(side="bottom", fill="x")
 
-        self.columns = ("full_name", "email", "phone", "department", "position", "hire_date", "employment_status")
+        self.columns = ("full_name", "email", "phone", "department", "position", "birth_date", "hire_date", "employment_status")
         self.tree = ttk.Treeview(table_frame, columns=self.columns, show="headings", height=20)
         self.tree.pack(fill="both", expand=True, padx=6, pady=6)
 
@@ -166,6 +151,7 @@ class EmployeesTab(ctk.CTkFrame):
             "email": "Email",
             "phone": "Телефон",
             "department": "Відділення",
+            "birth_date": "Дата народження",
             "position": "Посада",
             "hire_date": "Дата прийняття",
             "employment_status": "Статус",
@@ -180,6 +166,8 @@ class EmployeesTab(ctk.CTkFrame):
         self.tree.column("position",   width=180, anchor="w")
         self.tree.column("hire_date",  width=130, anchor="center")
         self.tree.column("employment_status", width=130, anchor="center")
+        self.tree.column("birth_date", width=140, anchor="center")
+
 
         # Дані + події
         self.load_data()
@@ -195,6 +183,7 @@ class EmployeesTab(ctk.CTkFrame):
             "email": e.get("email") or "",
             "phone": e.get("phone") or "",
             "department": e.get("department") or "",
+            "birth_date": e.get("birth_date") or "",
             "position": e.get("position") or "",
             "hire_date": e.get("hire_date") or "",
             "employment_status": e.get("employment_status") or "",
@@ -216,7 +205,7 @@ class EmployeesTab(ctk.CTkFrame):
             filtered = list(self.all_rows)
         else:
             def matches(r):
-                hay = " ".join([r["full_name"], r["email"], r["phone"], r["department"], r["position"]]).lower()
+                hay = " ".join([r["full_name"], r["email"], r["phone"], r["department"], r["position"], r["birth_date"]]).lower()
                 return q in hay
             filtered = [r for r in self.all_rows if matches(r)]
 
@@ -250,8 +239,9 @@ class EmployeesTab(ctk.CTkFrame):
             # ВАЖЛИВО: зберігаємо id у iid елемента
             self.tree.insert("", "end", iid=str(r["id"]), values=(
                 r["full_name"], r["email"], r["phone"],
-                r["department"], r["position"], r["hire_date"], r["employment_status"]
+                r["department"], r["position"], r["birth_date"], r["hire_date"], r["employment_status"]
             ))
+
 
     # ---------- Сортування ----------
     def sort_by(self, col: str):
@@ -266,7 +256,7 @@ class EmployeesTab(ctk.CTkFrame):
 
         def key_func(r):
             val = r.get(col, "")
-            if col == "hire_date" and val:
+            if col in ("hire_date","birth_date") and val:
                 try: return datetime.fromisoformat(val)
                 except ValueError: return datetime.min
             return (val or "").lower()
@@ -449,9 +439,6 @@ class EditEmployeeDialog(ctk.CTkToplevel):
 
 
 
-
-
-
 class HRMainWindow(ctk.CTk):
     def __init__(self, current_user=None):
         super().__init__()
@@ -469,17 +456,23 @@ class HRMainWindow(ctk.CTk):
         # Вкладки
         self.dashboard_tab = self.tabview.add("Головна")
         self.employees_tab = self.tabview.add("Працівники")
+        self.internships_tab = self.tabview.add("Стажування")
         self.directories_tab = self.tabview.add("Довідники")   # НОВЕ
         self.documents_tab = self.tabview.add("Документи")
-
+        
 
         # Головна
         dash = DashboardTab(self.dashboard_tab)
         dash.pack(fill="both", expand=True)
 
+        
         # Працівники
-        emps = EmployeesTab(self.employees_tab)
-        emps.pack(fill="both", expand=True)
+        self.employees_view = EmployeesTab(self.employees_tab)
+        self.employees_view.pack(fill="both", expand=True)
+
+        # Стажування
+        intern_tab = InternshipsTab(self.internships_tab)
+        intern_tab.pack(fill="both", expand=True)
 
         # Довідники (нова split-view вкладка)
         dirs_tab = DirectoriesTab(self.directories_tab)
@@ -490,10 +483,51 @@ class HRMainWindow(ctk.CTk):
         from documents_tab import DocumentsTab  # <--- додай імпорт угорі файлу
         docs_tab = DocumentsTab(self.documents_tab, current_user=self.current_user)
         docs_tab.pack(fill="both", expand=True)
+        # 👉 колбек автооновлення вкладки "Працівники"
+        docs_tab.on_employee_created = self.employees_view.load_data
+
+        # ---- бейдж-числа на вкладках ----
+        self._install_badge_updaters()
+
+
+        # ---- АВТО-ЗАВЕРШЕННЯ ПРОСТРОЧЕНИХ СТАЖУВАНЬ ПРИ СТАРТІ ----
+        try:
+            import db_manager as db  # якщо вже є імпорт угорі, цю стрічку можна прибрати
+            db.auto_complete_overdue()   # переведе overdue → completed (за нашою політикою)
+            self.internships_view.refresh()  # оновимо таблицю після автозміни
+        except Exception:
+            pass
+
+
+     # для лічильників в назві вкладки       
+    def _set_tab_text(self, tab_name: str, new_text: str):
+        try:
+            btn = self.tabview._segmented_button._buttons_dict[tab_name]
+            btn.configure(text=new_text)
+        except Exception:
+            pass
+
+    def refresh_tab_badges(self):
+        try:
+            over = db.internships_overdue_count()
+            soon = db.internships_soon_count()
+            docs = db.docs_sent_count()
+        except Exception:
+            over = soon = docs = 0
+
+        total_intern_warn = (over or 0) + (soon or 0)
+        intern_label = "Стажування" + (f" • {total_intern_warn}" if total_intern_warn > 0 else "")
+        docs_label   = "Документи"  + (f" • {docs}"               if docs > 0               else "")
+
+        self._set_tab_text("Стажування", intern_label)
+        self._set_tab_text("Документи",  docs_label)
+
+    def _install_badge_updaters(self):
+        self.refresh_tab_badges()
+        self.after(60_000, self._install_badge_updaters)
 
 
 
-from tkinter import messagebox
 
 class DirectoriesTab(ctk.CTkFrame):
     """Split-view: ліворуч Відділення, праворуч Посади (фільтр за вибраним відділенням)."""

@@ -1,3 +1,5 @@
+# src/login_window.py
+
 import customtkinter as ctk
 import sqlite3
 from tkinter import messagebox
@@ -10,28 +12,32 @@ DB_PATH = r"D:/Projects/hr_is/data/hr_system.db"  # перевір, що шля�
 
 def authenticate(username: str, password: str):
     """
-    Повертає кортеж (ok: bool, role: str | None, err: str | None)
-    ok=True  -> знайдено користувача з таким логіном/паролем
-    ok=False -> помилка (err містить текст)
+    Повертає кортеж (ok: bool, role: str | None, employee_id: int | None, err: str | None)
     """
     if not username or not password:
-        return False, None, "Введіть логін і пароль."
+        return False, None, None, "Введіть логін і пароль."
 
     try:
         con = sqlite3.connect(DB_PATH)
         cur = con.cursor()
         cur.execute(
-            "SELECT role FROM users WHERE username = ? AND password = ?",
+            "SELECT role, employee_id, is_active FROM users WHERE username = ? AND password = ?",
             (username.strip(), password.strip())
         )
         row = cur.fetchone()
         con.close()
     except Exception as e:
-        return False, None, f"Помилка БД: {e}"
+        return False, None, None, f"Помилка БД: {e}"
 
     if row is None:
-        return False, None, "Невірний логін або пароль."
-    return True, row[0], None
+        return False, None, None, "Невірний логін або пароль."
+
+    role, employee_id, is_active = row[0], row[1], row[2]
+    if is_active is not None and int(is_active) == 0:
+        return False, None, None, "Обліковий запис деактивовано."
+
+    return True, role, employee_id, None
+
 
 
 # === Вікно авторизації ===
@@ -62,32 +68,36 @@ status_label = ctk.CTkLabel(app, text="", text_color="red")
 status_label.pack(pady=(6, 0))
 
 def do_login():
-    status_label.configure(text="")  # очистити попередній статус
+    status_label.configure(text="")
     username = entry_username.get()
     password = entry_password.get()
 
-    ok, role, err = authenticate(username, password)
+    ok, role, employee_id, err = authenticate(username, password)
     if not ok:
         status_label.configure(text=err or "Помилка авторизації.")
         return
 
-    # Дозволяємо доступ лише HR та Admin
-    if role in ("hr", "admin"):
-        # Відкриваємо головне вікно залежно від ролі
-        app.destroy()  # закриваємо вікно авторизації
+    app.destroy()  # закриваємо вікно авторизації
 
-        if role == "admin":
-            from admin_main_window import AdminMainWindow
-            AdminMainWindow(None, current_user={"username": username, "role": role}).mainloop()
-        else:
-            from hr_main_window import HRMainWindow
-            HRMainWindow(None, current_user={"username": username, "role": role}).mainloop()
+    if role == "admin":
+        from admin_main_window import AdminMainWindow
+        AdminMainWindow(None, current_user={"username": username, "role": role}).mainloop()
+
+    elif role == "hr":
+        from hr_main_window import HRMainWindow
+        HRMainWindow(None, current_user={"username": username, "role": role}).mainloop()
+
+    elif role == "employee":
+        import employee_main_window as emw
+        emw.EmployeeMainWindow(
+            current_user={"username": username, "role": role, "employee_id": employee_id}
+        ).mainloop()
+
 
     else:
-        messagebox.showwarning(
-            "Обмеження доступу",
-            f"Ви увійшли як '{role}'. Доступ до HR-модуля обмежений."
-        )
+        messagebox.showwarning("Обмеження доступу",
+                               f"Роль '{role}' не має окремого вікна.")
+
 
 # Кнопки
 button_login = ctk.CTkButton(app, text="Увійти", width=220, command=do_login)

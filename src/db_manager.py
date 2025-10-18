@@ -90,6 +90,7 @@ def get_employees():
            e.phone,
            d.name AS department,
            p.name AS position,
+           e.birth_date,
            e.hire_date,
            e.employment_status
       FROM employees e
@@ -518,6 +519,39 @@ def get_next_p1_order_number():
     return f"{next_seq}/{y}"
 
 
+def get_next_p4_order_number():
+    """
+    Повертає наступний номер П-4 у форматі 'N/YYYY', шукаючи в documents.context_json → $.order_number
+    для type='P4' у поточному році.
+    """
+    y = date.today().year
+    row = fetch_one(
+        """
+        SELECT COALESCE(
+            MAX(
+                CAST(
+                    SUBSTR(
+                        json_extract(context_json, '$.order_number'),
+                        1,
+                        INSTR(json_extract(context_json, '$.order_number'), '/') - 1
+                    ) AS INTEGER
+                )
+            ),
+            0
+        ) AS max_seq
+        FROM documents
+        WHERE type = 'P4'
+          AND json_extract(context_json, '$.order_number') LIKE ?
+        """,
+        (f'%/{y}',)
+    )
+    next_seq = (row["max_seq"] if row else 0) + 1
+    return f"{next_seq}/{y}"
+
+
+
+
+
 def order_number_exists_p1(order_no: str) -> bool:
     """
     Чи існує вже такий номер у П-1 (у context_json)?
@@ -533,3 +567,116 @@ def order_number_exists_p1(order_no: str) -> bool:
     )
     return (row and row["c"] > 0)
 
+
+
+
+
+# ===== Internships =====
+def list_internships(status: str | None = None, search: str | None = None):
+    q = """
+        SELECT i.id, i.employee_id, i.start_date, i.months,
+               i.planned_end_date, i.status, IFNULL(i.notes,'') AS notes,
+               (e.last_name || ' ' || e.first_name || ' ' || IFNULL(e.middle_name,'')) AS full_name,
+               d.name AS department_name, p.name AS position_name
+        FROM internships i
+        JOIN employees e ON e.id = i.employee_id
+        LEFT JOIN departments d ON d.id = e.department_id
+        LEFT JOIN positions   p ON p.id = e.position_id
+        WHERE 1=1
+    """
+    params = []
+    if status and status != "усі":
+        q += " AND i.status = ?"
+        params.append(status)
+    if search:
+        like = f"%{search}%"
+        q += " AND (full_name LIKE ? OR IFNULL(d.name,'') LIKE ? OR IFNULL(p.name,'') LIKE ?)"
+        params.extend([like, like, like])
+    q += " ORDER BY i.status DESC, i.planned_end_date ASC"
+    return fetch_all(q, tuple(params))
+
+
+def auto_complete_overdue():
+    """Усі active з простроченим planned_end_date → completed."""
+    return execute_query("""
+        UPDATE internships
+           SET status='completed', updated_at=CURRENT_TIMESTAMP
+         WHERE status='active' AND DATE(planned_end_date) < DATE('now')
+    """)
+
+
+def extend_internship(internship_id: int, add_months: int, note: str = ""):
+    """+N місяців до planned_end_date; статус лишається active."""
+    return execute_query("""
+        UPDATE internships
+           SET months = months + ?,
+               planned_end_date = DATE(planned_end_date, '+' || ? || ' months'),
+               notes = TRIM(COALESCE(notes,'') || CASE WHEN ?='' THEN '' ELSE CHAR(10) || ? END),
+               updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND status = 'active'
+    """, (add_months, add_months, note, note, internship_id))
+
+
+def complete_internship_now(internship_id: int, note: str = ""):
+    return execute_query("""
+        UPDATE internships
+           SET status='completed',
+               notes = TRIM(COALESCE(notes,'') || CASE WHEN ?='' THEN '' ELSE CHAR(10) || ? END),
+               updated_at=CURRENT_TIMESTAMP
+         WHERE id = ? AND status='active'
+    """, (note, note, internship_id))
+
+
+def fail_internship(internship_id: int, note: str = ""):
+    return execute_query("""
+        UPDATE internships
+           SET status='failed',
+               notes = TRIM(COALESCE(notes,'') || CASE WHEN ?='' THEN '' ELSE CHAR(10) || ? END),
+               updated_at=CURRENT_TIMESTAMP
+         WHERE id = ? AND status='active'
+    """, (note, note, internship_id))
+
+
+def auto_complete_overdue() -> int:
+    """
+    Завершує всі активні стажування, у яких planned_end_date < сьогодні.
+    Повертає кількість оновлених рядків.
+    """
+    from contextlib import closing
+    with closing(sqlite3.connect(DB_PATH)) as con, closing(con.cursor()) as cur:
+        cur.execute("""
+            UPDATE internships
+            SET status = 'completed',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE status = 'active'
+              AND DATE(planned_end_date) < DATE('now')
+        """)
+        con.commit()
+        return cur.rowcount or 0
+
+
+# лічильники
+def internships_overdue_count():
+    row = fetch_one("""
+        SELECT COUNT(*) AS c
+        FROM internships
+        WHERE status='active' AND DATE(planned_end_date) < DATE('now')
+    """)
+    return row["c"] if row else 0
+
+def internships_soon_count():
+    row = fetch_one("""
+        SELECT COUNT(*) AS c
+        FROM internships
+        WHERE status='active'
+          AND DATE(planned_end_date) BETWEEN DATE('now') AND DATE('now','+14 day')
+    """)
+    return row["c"] if row else 0
+
+def docs_sent_count():
+    row = fetch_one("""
+        SELECT COUNT(*) AS c
+        FROM documents
+        WHERE status='sent'
+    """)
+    return row["c"] if row else 0

@@ -43,6 +43,12 @@ class P1CreateForm(ctk.CTkToplevel):
         self.email  = ctk.CTkEntry(row2, placeholder_text="Email", width=300); self.email.pack(side="left", padx=(0,8))
         self.phone  = ctk.CTkEntry(row2, placeholder_text="Телефон", width=200); self.phone.pack(side="left")
 
+        row2b = ctk.CTkFrame(self.body); row2b.pack(fill="x", pady=3)
+        ctk.CTkLabel(row2b, text="Дата народження:").pack(side="left", padx=(0,6))
+        self.birth_date = ctk.CTkEntry(row2b, placeholder_text="YYYY-MM-DD", width=160)
+        self.birth_date.pack(side="left")
+
+
         # Відділення/посада (залежні)
         deps = db.get_departments_list()
         self.deps_map = {d["name"]: d["id"] for d in deps}
@@ -171,6 +177,17 @@ class P1CreateForm(ctk.CTkToplevel):
             return "Оберіть відділення і посаду."
         if not self.order_number.get().strip() or not self.order_date.get().strip() or not self.hire_date.get().strip():
             return "Заповніть номер наказу, дату наказу та дату початку роботи."
+        # перевірка дати народження
+        bd = self.birth_date.get().strip()
+        if bd:
+            if len(bd) != 10:
+                return "Дата народження має бути у форматі YYYY-MM-DD."
+            try:
+                from datetime import datetime
+                datetime.strptime(bd, "%Y-%m-%d")
+            except ValueError:
+                return "Некоректна дата народження (очікується YYYY-MM-DD)."
+
         return None
 
     def _collect_employee(self):
@@ -186,7 +203,9 @@ class P1CreateForm(ctk.CTkToplevel):
             "email":      self.email.get().strip(),
             "phone":      self.phone.get().strip(),
             "department_id": dep_id,
-            "position_id":   pos_id
+            "position_id":   pos_id,
+            "birth_date":    self.birth_date.get().strip() or None
+
         }
 
     def _collect_payload(self):
