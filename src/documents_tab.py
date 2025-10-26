@@ -7,6 +7,8 @@ from pathlib import Path
 import db_manager as db
 from p1_create_form import P1CreateForm
 from p4_create_form import P4CreateForm
+from training_referral_form import TrainingReferralForm
+from vacation_form import VacationForm
 import string
 from secrets import choice
 
@@ -117,19 +119,50 @@ class DocumentsTab(ctk.CTkFrame):
     def _open_create_menu(self):
         menu = ctk.CTkToplevel(self)
         menu.title("Обрати тип документа")
-        menu.geometry("360x200")
+        menu.geometry("400x360")
         menu.resizable(False, False)
         menu.grab_set()
 
-        ctk.CTkLabel(menu, text="Оберіть тип документа:", font=ctk.CTkFont(size=14, weight="bold")).pack(pady=(16,10))
+        ctk.CTkLabel(menu, text="Обрати тип документа", font=ctk.CTkFont(size=14, weight="bold")).pack(pady=(16, 8))
 
-        # Поки реалізований тільки П-1; інші покажуть заглушку
-        ctk.CTkButton(menu, text="Прийняття на роботу (П-1)", width=260,
-                      command=lambda: (menu.destroy(), self.open_create_p1())).pack(pady=6)
-        ctk.CTkButton(menu, text="Звільнення (П-4)", width=260,
-                    command=lambda: (menu.destroy(), self.open_create_p4())).pack(pady=6)
-        ctk.CTkButton(menu, text="Відпустка (ще не реалізовано)", width=260,
-                      command=lambda: messagebox.showinfo("У розробці", "Тип документа ще не реалізовано.")).pack(pady=6)
+        # ── Прийом / звільнення ──────────────────────────────────────────────
+        ctk.CTkLabel(menu, text="Прийом / звільнення", font=ctk.CTkFont(size=13, weight="bold")).pack(
+            anchor="w", padx=16, pady=(4, 6)
+        )
+        ctk.CTkButton(menu, text="Прийняття на роботу (П-1)", width=300,
+                    command=lambda: (menu.destroy(), self.open_create_p1())).pack(
+            pady=(0, 6), padx=16, anchor="w"
+        )
+        ctk.CTkButton(menu, text="Звільнення (П-4)", width=300,
+                    command=lambda: (menu.destroy(), self.open_create_p4())).pack(
+            pady=(0, 10), padx=16, anchor="w"
+        )
+
+        # ── Роздільник ───────────────────────────────────────────────────────
+        ttk.Separator(menu, orient="horizontal").pack(fill="x", padx=12, pady=(4, 10))
+
+
+        # ── Супровід ─────────────────────────────────────────────────────────
+        ctk.CTkLabel(menu, text="Супровід", font=ctk.CTkFont(size=13, weight="bold")).pack(
+            anchor="w", padx=16, pady=(0, 6)
+        )
+        ctk.CTkButton(
+            menu, text="Підвищення кваліфікації", width=300,
+            command=lambda: (menu.destroy(), self.open_create_training_referral())
+        ).pack(pady=6, padx=16, anchor="w")
+
+
+        ctk.CTkButton(
+            menu, text="Атестація", width=300,
+            command=lambda: messagebox.showinfo("У розробці", "Форма створення направлення/подання на атестацію буде додана після підвищення кваліфікації.")
+        ).pack(pady=6, padx=16, anchor="w")
+
+        ctk.CTkButton(
+            menu, text="Відпустка (П-3)", width=300,
+            command=lambda: (menu.destroy(), self.open_create_vacation())
+        ).pack(pady=(6, 12), padx=16, anchor="w")
+
+
 
     # ---------- Create P-1 ----------
     def open_create_p1(self):
@@ -148,6 +181,24 @@ class DocumentsTab(ctk.CTkFrame):
                 self.on_employee_created()
 
 
+            # --- [NEW] ПІБ підписанта (director_full_name) з app_settings ---
+            director_full_name = ""
+            try:
+                row_dir = db.fetch_one("SELECT value FROM app_settings WHERE key='director_employee_id'")
+                dir_emp_id = int(row_dir["value"]) if row_dir and str(row_dir.get("value","")).isdigit() else None
+                if dir_emp_id:
+                    dmin = db.get_employee_min(dir_emp_id)  # {last_name, first_name, middle_name, ...}
+                    director_full_name = " ".join(filter(None, [
+                        dmin.get("last_name",""), dmin.get("first_name",""), dmin.get("middle_name","")
+                    ])).strip()
+            except Exception:
+                pass
+
+            # підставляємо у payload П-1 (піде в context_json при створенні документа П-1)
+            payload["director_full_name"] = director_full_name
+
+
+
             # 1.2) СТАЖУВАННЯ: створюємо запис для новачка
             # старт стажування — з payload (hire_date/start_date) або сьогодні
             start_iso = (
@@ -158,23 +209,110 @@ class DocumentsTab(ctk.CTkFrame):
 
             # тривалість у місяцях: з payload['probation_months'] або дефолт 3
             try:
-                months = int(payload.get("probation_months") or 3)
+                months = int(payload.get("internship_months") or 3)
             except (TypeError, ValueError):
                 months = 3
+            months = max(1, min(3, months))  # обмежимо 1–3
 
-            # запис у таблицю internships (під твою схему!)
-            db.execute_query("""
+            # запис у таблицю internships
+            # --- створюємо стажування і зберігаємо його id ---
+            mentor_id = payload.get("mentor_employee_id")
+
+            internship_id = db.execute_query("""
                 INSERT INTO internships (
                     employee_id, start_date, months, planned_end_date, status, notes,
-                    created_at,          updated_at
+                    mentor_employee_id,
+                    created_at, updated_at
                 )
                 VALUES (
                     :emp_id, :start_date, :months,
                     DATE(:start_date, '+' || :months || ' months'),
                     'active', 'Авто: прийняття за П-1',
+                    :mentor_employee_id,
                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
-            """, {"emp_id": emp_id, "start_date": start_iso, "months": months})
+            """, {
+                "emp_id": emp_id,
+                "start_date": start_iso,
+                "months": months,
+                "mentor_employee_id": mentor_id
+            })
+
+            # --- нам потрібна фактична дата завершення, яку порахував SQLite ---
+            intern_row = db.fetch_one("SELECT planned_end_date FROM internships WHERE id = ?", (internship_id,))
+            planned_end_iso = (intern_row or {}).get("planned_end_date") or start_iso
+
+            # --- дані працівника та наставника для шаблону ---
+            emp_min = db.get_employee_min(emp_id)  # {last_name, first_name, middle_name, department_name, position_name, ...}
+            mentor_min = db.get_employee_min(mentor_id) if mentor_id else None
+            mentor_full_name = " ".join(filter(None, [
+                (mentor_min or {}).get("last_name", ""),
+                (mentor_min or {}).get("first_name", ""),
+                (mentor_min or {}).get("middle_name", ""),
+            ])).strip()
+
+            # --- контекст рівно з тими ключами, що в твоєму шаблоні internship_assignment.docx ---
+            context_int = {
+                # шапка наказу
+                "order_number":    payload.get("order_number", ""),
+                "order_date_str":  date_ddmmyyyy(payload.get("order_date") or db.today_iso()),
+
+                # період стажування
+                "internship_start_date_str": date_ddmmyyyy(start_iso),
+                "internship_end_date_str":   date_ddmmyyyy(planned_end_iso),
+
+                # ==== ПРАЦІВНИК ====
+                # плоскі ключі (на випадок якщо вони є в шаблоні)
+                "employee_last_name":   emp_min.get("last_name", ""),
+                "employee_first_name":  emp_min.get("first_name", ""),
+                "employee_middle_name": emp_min.get("middle_name", ""),
+
+                # ВКЛАДЕНИЙ об’єкт employee.* — саме його очікує твій шаблон
+                "employee": {
+                    "last_name":       emp_min.get("last_name", ""),
+                    "first_name":      emp_min.get("first_name", ""),
+                    "middle_name":     emp_min.get("middle_name", ""),
+                    "department_name": emp_min.get("department_name", ""),
+                    "position_name":   emp_min.get("position_name", ""),
+                },
+
+                # ==== НАСТАВНИК ====
+                "mentor_full_name":       mentor_full_name,
+                "mentor_department_name": (mentor_min or {}).get("department_name", "") if mentor_min else "",
+                "mentor_position":        (mentor_min or {}).get("position_name", "") if mentor_min else "",
+
+                # підписи (до моменту підпису порожньо)
+                "director_full_name": director_full_name,
+                "employee_sign_day":   "",
+                "employee_sign_month": "",
+                "employee_sign_year":  "",
+            }
+
+
+            # --- створюємо документ типу INTERNSHIP_REFERRAL зі статусом 'sent' ---
+            doc_id_int = db.execute_query("""
+                INSERT INTO documents(type, employee_id, status, title, context_json, created_by)
+                VALUES ('INTERNSHIP_REFERRAL', ?, 'sent', ?, ?, ?)
+            """, (
+                emp_id,
+                f"Направлення на стажування: {emp_min.get('last_name','')} {emp_min.get('first_name','')}",
+                json.dumps(context_int, ensure_ascii=False),
+                (self.current_user or {}).get("username", "hr"),
+            ))
+
+            # історія payload (не обовʼязково, але корисно)
+            try:
+                db.execute_query(
+                    "INSERT INTO document_payloads(document_id, payload_json) VALUES (?, ?)",
+                    (doc_id_int, json.dumps(context_int, ensure_ascii=False))
+                )
+            except Exception:
+                pass
+
+            # --- прив'язуємо документ до стажування ---
+            db.execute_query("UPDATE internships SET doc_id = ? WHERE id = ?", (doc_id_int, internship_id))
+
+
 
 
 
@@ -280,6 +418,23 @@ class DocumentsTab(ctk.CTkFrame):
             cb_severance = "☑" if has_sev else "☐"
             sev_kop = f"{int(sev_kop):02d}" if sev_kop.isdigit() else "00"
 
+
+            # --- [NEW] ПІБ підписанта (director_full_name) з app_settings ---
+            director_full_name = ""
+            try:
+                row_dir = db.fetch_one("SELECT value FROM app_settings WHERE key='director_employee_id'")
+                dir_emp_id = int(row_dir["value"]) if row_dir and str(row_dir.get("value","")).isdigit() else None
+                if dir_emp_id:
+                    dmin = db.get_employee_min(dir_emp_id)
+                    director_full_name = " ".join(filter(None, [
+                        dmin.get("last_name",""), dmin.get("first_name",""), dmin.get("middle_name","")
+                    ])).strip()
+            except Exception:
+                pass
+
+
+
+
             context = {
                 "order_number":       payload.get("order_number", ""),
                 "order_date_str":     _to_ddmmyyyy(order_date_iso),
@@ -301,7 +456,7 @@ class DocumentsTab(ctk.CTkFrame):
                 "severance_grn": sev_grn,
                 "severance_kop": sev_kop,
 
-                "director_full_name": payload.get("director_full_name", ""),  # поки можна лишити ""
+                "director_full_name": director_full_name,
 
                 # дати підпису працівника ставляться при натисканні "Підписати"
                 "employee_sign_day":   "",
@@ -336,3 +491,73 @@ class DocumentsTab(ctk.CTkFrame):
 
         form.on_submit = on_submit
 
+
+    def open_create_training_referral(self):
+        from training_referral_form import TrainingReferralForm
+        form = TrainingReferralForm(self)
+
+        def on_submit(emp_id: int, payload: dict):
+            # 1) Створюємо документ у БД зі статусом 'sent'
+            title = f"Направлення на підвищення кваліфікації: {payload.get('employee', {}).get('last_name','')} {payload.get('employee', {}).get('first_name','')}"
+            doc_id = db.execute_query(
+                """
+                INSERT INTO documents(type, employee_id, status, title, context_json, created_by)
+                VALUES ('TRAINING', ?, 'sent', ?, ?, ?)
+                """,
+                (
+                    emp_id,
+                    title,
+                    json.dumps(payload, ensure_ascii=False),
+                    (self.current_user or {}).get("username", "hr"),
+                )
+            )
+
+            # 2) (необовʼязково) Історія payload
+            try:
+                db.execute_query(
+                    "INSERT INTO document_payloads(document_id, payload_json) VALUES (?, ?)",
+                    (doc_id, json.dumps(payload, ensure_ascii=False))
+                )
+            except Exception:
+                pass
+
+            # 3) Оновити таблицю і повідомити
+            self.refresh()
+            from tkinter import messagebox
+            messagebox.showinfo("Готово", "Направлення на підвищення кваліфікації створено і відправлено на підпис.")
+
+        form.on_submit = on_submit
+
+
+        # ---------- Create VACATION ----------
+    def open_create_vacation(self):
+        """Вікно: Наказ про надання відпустки."""
+        form = VacationForm(self)
+
+        def on_submit(emp_id, payload):
+            # INSERT у documents зі статусом 'sent'
+            doc_id = db.execute_query("""
+                INSERT INTO documents(type, employee_id, status, title, context_json, created_by)
+                VALUES ('VACATION', ?, 'sent', ?, ?, ?)
+            """, (
+                emp_id,
+                f"Надання відпустки: {payload.get('employee', {}).get('last_name', '')} "
+                f"{payload.get('employee', {}).get('first_name', '')}",
+                json.dumps(payload, ensure_ascii=False),
+                (self.current_user or {}).get("username", "hr"),
+            ))
+
+            # (необов’язково) історія payload
+            try:
+                db.execute_query(
+                    "INSERT INTO document_payloads(document_id, payload_json) VALUES (?, ?)",
+                    (doc_id, json.dumps(payload, ensure_ascii=False))
+                )
+            except Exception:
+                pass
+
+            # оновити таблицю
+            self.refresh()
+            messagebox.showinfo("Готово", "Наказ про відпустку створено і відправлено на підпис.")
+
+        form.on_submit = on_submit

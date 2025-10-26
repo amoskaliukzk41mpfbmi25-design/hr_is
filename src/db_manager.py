@@ -1,3 +1,4 @@
+# src/db_manager.py
 from contextlib import closing
 import sqlite3, json
 from pathlib import Path
@@ -488,6 +489,16 @@ def today_iso():
     """Сьогоднішня дата у форматі YYYY-MM-DD."""
     return date.today().isoformat()
 
+# === App settings (глобальні налаштування) ===
+def get_setting(key: str):
+    """
+    Повертає значення з таблиці app_settings за ключем (або None, якщо нема).
+    Очікується таблиця:
+      app_settings(key TEXT PRIMARY KEY, value TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
+    """
+    row = fetch_one("SELECT value FROM app_settings WHERE key = ?", (key,))
+    return row["value"] if row else None
+
 
 def get_next_p1_order_number():
     """
@@ -547,6 +558,66 @@ def get_next_p4_order_number():
     )
     next_seq = (row["max_seq"] if row else 0) + 1
     return f"{next_seq}/{y}"
+
+
+def get_next_training_order_number():
+    """
+    Повертає наступний номер для направлення на підвищення кваліфікації у форматі 'N/YYYY'.
+    Шукає у documents.context_json → $.order_number для type='TRAINING' у поточному році.
+    """
+    y = date.today().year
+    row = fetch_one(
+        """
+        SELECT COALESCE(
+            MAX(
+                CAST(
+                    SUBSTR(
+                        json_extract(context_json, '$.order_number'),
+                        1,
+                        INSTR(json_extract(context_json, '$.order_number'), '/') - 1
+                    ) AS INTEGER
+                )
+            ),
+            0
+        ) AS max_seq
+        FROM documents
+        WHERE type = 'TRAINING'
+          AND json_extract(context_json, '$.order_number') LIKE ?
+        """,
+        (f'%/{y}',)
+    )
+    next_seq = (row["max_seq"] if row else 0) + 1
+    return f"{next_seq}/{y}"
+
+def get_next_vacation_order_number():
+    """
+    Повертає наступний номер наказу про відпустку у форматі 'N/YYYY',
+    шукаючи в documents.context_json → $.order_number для type='VACATION' у поточному році.
+    """
+    y = date.today().year
+    row = fetch_one(
+        """
+        SELECT COALESCE(
+            MAX(
+                CAST(
+                    SUBSTR(
+                        json_extract(context_json, '$.order_number'),
+                        1,
+                        INSTR(json_extract(context_json, '$.order_number'), '/') - 1
+                    ) AS INTEGER
+                )
+            ),
+            0
+        ) AS max_seq
+        FROM documents
+        WHERE type = 'VACATION'
+          AND json_extract(context_json, '$.order_number') LIKE ?
+        """,
+        (f'%/{y}',)
+    )
+    next_seq = (row["max_seq"] if row else 0) + 1
+    return f"{next_seq}/{y}"
+
 
 
 
@@ -680,3 +751,26 @@ def docs_sent_count():
         WHERE status='sent'
     """)
     return row["c"] if row else 0
+
+
+
+def get_employee_brief_list_by_department(dep_id: int):
+    """
+    Повертає список [(id, 'Прізвище Імʼя По батькові'), ...] тільки для вказаного відділення,
+    лише активні працівники.
+    """
+    if not dep_id:
+        return []
+    rows = fetch_all("""
+        SELECT e.id,
+               TRIM(
+                 COALESCE(e.last_name,'') || ' ' || COALESCE(e.first_name,'') ||
+                 CASE WHEN IFNULL(e.middle_name,'')<>'' THEN ' '||e.middle_name ELSE '' END
+               ) AS full_name
+        FROM employees e
+        WHERE e.department_id = ?
+          AND e.employment_status = 'активний'
+        ORDER BY e.last_name, e.first_name, e.middle_name
+    """, (dep_id,))
+    # уніфікуємо формат під [(id, name), ...]
+    return [(r["id"], r["full_name"]) for r in rows]

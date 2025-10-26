@@ -81,11 +81,12 @@ def do_login():
 
     if role == "admin":
         from admin_main_window import AdminMainWindow
-        AdminMainWindow(None, current_user={"username": username, "role": role}).mainloop()
+        AdminMainWindow(current_user={"username": username, "role": role}).mainloop()
 
     elif role == "hr":
         from hr_main_window import HRMainWindow
-        HRMainWindow(None, current_user={"username": username, "role": role}).mainloop()
+        HRMainWindow(current_user={"username": username, "role": role}).mainloop()
+
 
     elif role == "employee":
         import employee_main_window as emw

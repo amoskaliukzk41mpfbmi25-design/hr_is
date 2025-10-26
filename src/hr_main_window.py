@@ -1,3 +1,4 @@
+# src/hr_main_window.py
 from datetime import datetime
 from tkinter import ttk
 import customtkinter as ctk
@@ -480,7 +481,6 @@ class HRMainWindow(ctk.CTk):
 
 
         # Документи (нова вкладка)
-        from documents_tab import DocumentsTab  # <--- додай імпорт угорі файлу
         docs_tab = DocumentsTab(self.documents_tab, current_user=self.current_user)
         docs_tab.pack(fill="both", expand=True)
         # 👉 колбек автооновлення вкладки "Працівники"
@@ -791,5 +791,5 @@ class DirectoriesTab(ctk.CTkFrame):
 
 
 if __name__ == "__main__":
-    app = HRMainWindow(current_user={"username": "hr_koval", "role": "hr"})
+    app = HRMainWindow(current_user={"username": "olena.shevchenko", "role": "hr"})
     app.mainloop()

@@ -9,6 +9,9 @@ import os, sys, subprocess, json
 TEMPLATES_MAP = {
     "P1": Path("data/templates/hire_order_P1.docx"),  # ← за потреби змінити назву файла шаблону
     "P4": Path("data/templates/dismissal_order_P4.docx"),  
+    "INTERNSHIP_REFERRAL": Path("data/templates/internship_assignment.docx"),
+    "TRAINING": Path("data/templates/training_referral.docx"),
+    "VACATION": Path("data/templates/vacation_order.docx"), 
 }
 
 
@@ -106,9 +109,103 @@ class EmployeeMainWindow(ctk.CTk):
         note = ctk.CTkLabel(
             wrap,
             text="За потреби змінити контактні дані зверніться до HR.",
-            text_color=("gray70", "gray50")
+            text_color=("#6B7280", "#CBD5E1")
         )
         note.grid(row=len(labels)+1, column=0, columnspan=2, sticky="w", padx=12, pady=(8, 12))
+
+
+        # ==== Стажування (коротка секція) ====
+        sep = ctk.CTkFrame(wrap, height=2)
+        sep.grid(row=len(labels)+2, column=0, columnspan=2, sticky="ew", padx=12, pady=(4,6))
+
+        ctk.CTkLabel(wrap, text="Стажування", font=ctk.CTkFont(size=14, weight="bold"))\
+            .grid(row=len(labels)+3, column=0, columnspan=2, sticky="w", padx=12, pady=(2,6))
+
+        self._internship_vars = {
+            "period": ctk.StringVar(value="—"),
+            "mentor": ctk.StringVar(value="—"),
+            "status": ctk.StringVar(value="—"),
+        }
+
+        rowi = len(labels)+4
+        ctk.CTkLabel(wrap, text="Період", anchor="w")\
+            .grid(row=rowi, column=0, sticky="ew", padx=(12,6), pady=4)
+        e1 = ctk.CTkEntry(wrap, textvariable=self._internship_vars["period"]); e1.configure(state="disabled")
+        e1.grid(row=rowi, column=1, sticky="ew", padx=(6,12), pady=4)
+
+        rowi += 1
+        ctk.CTkLabel(wrap, text="Наставник", anchor="w")\
+            .grid(row=rowi, column=0, sticky="ew", padx=(12,6), pady=4)
+        e2 = ctk.CTkEntry(wrap, textvariable=self._internship_vars["mentor"]); e2.configure(state="disabled")
+        e2.grid(row=rowi, column=1, sticky="ew", padx=(6,12), pady=4)
+
+        rowi += 1
+        ctk.CTkLabel(wrap, text="Статус", anchor="w")\
+            .grid(row=rowi, column=0, sticky="ew", padx=(12,6), pady=4)
+        e3 = ctk.CTkEntry(wrap, textvariable=self._internship_vars["status"]); e3.configure(state="disabled")
+        e3.grid(row=rowi, column=1, sticky="ew", padx=(6,12), pady=4)
+
+        rowi += 1
+        self.btn_preview_intern = ctk.CTkButton(
+            wrap, text="Переглянути направлення", width=240, command=self.preview_internship_doc
+        )
+        self.btn_preview_intern.grid(row=rowi, column=1, sticky="e", padx=(6,12), pady=(6,12))
+
+
+        rowi += 1
+        # Інфо-рядок про відпустку (ховаємо за замовчуванням)
+        self._vacation_note_var = ctk.StringVar(value="")
+        self.vacation_note = ctk.CTkLabel(
+            wrap,
+            textvariable=self._vacation_note_var,
+            wraplength=720,
+            # трішки помітніший колір, добре читається в обох темах
+            text_color=("#b45309", "#fbbf24")   # помаранчевий у світлій / бурштин у темній
+        )
+        self.vacation_note.grid(row=rowi, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 12))
+        self.vacation_note.grid_remove()  # поки що не показуємо
+
+
+
+        # ==== Підвищення кваліфікації (нагадування) ====
+        sep2 = ctk.CTkFrame(wrap, height=2)
+        sep2.grid(row=rowi+1, column=0, columnspan=2, sticky="ew", padx=12, pady=(4,6))
+
+        self.training_frame = ctk.CTkFrame(wrap, corner_radius=8)
+        self.training_frame.grid(row=rowi+2, column=0, columnspan=2, sticky="ew", padx=12, pady=(4, 12))
+        self.training_frame.grid_columnconfigure(0, weight=1)
+        self.training_frame.grid_remove()  # спочатку приховано
+
+        # Заголовок і бейджик-статус
+        top_tr = ctk.CTkFrame(self.training_frame)
+        top_tr.grid(row=0, column=0, sticky="ew", padx=10, pady=(8,4))
+        top_tr.grid_columnconfigure(0, weight=1)
+
+        self._tr_title_var = ctk.StringVar(value="")
+        ctk.CTkLabel(top_tr, textvariable=self._tr_title_var, font=ctk.CTkFont(size=14, weight="bold"))\
+            .grid(row=0, column=0, sticky="w")
+
+        self._tr_badge_var = ctk.StringVar(value="")
+        self._tr_badge = ctk.CTkLabel(top_tr, textvariable=self._tr_badge_var)
+        self._tr_badge.grid(row=0, column=1, sticky="e", padx=(6,0))
+
+        # Метадані (провайдер / формат / місце)
+        self._tr_meta_var = ctk.StringVar(value="")
+        ctk.CTkLabel(self.training_frame, textvariable=self._tr_meta_var)\
+            .grid(row=1, column=0, sticky="w", padx=10)
+
+        # Період і «залишилось N дн.»
+        self._tr_period_var = ctk.StringVar(value="")
+        ctk.CTkLabel(self.training_frame, textvariable=self._tr_period_var, text_color=("#6B7280", "#CBD5E1"))\
+            .grid(row=2, column=0, sticky="w", padx=10, pady=(0,6))
+
+        # Дії
+        actions_tr = ctk.CTkFrame(self.training_frame)
+        actions_tr.grid(row=3, column=0, sticky="e", padx=10, pady=(4,10))
+        ctk.CTkButton(actions_tr, text="Переглянути", width=160, command=self.preview_training_doc)\
+            .pack(side="right", padx=(6,0))
+        # Кнопку "Підписати" додамо наступним кроком
+
 
     def _build_docs_tab(self):
         wrap = ctk.CTkFrame(self.tab_docs, corner_radius=10)
@@ -204,6 +301,13 @@ class EmployeeMainWindow(ctk.CTk):
             for k, v in data.items():
                 self._profile_vars[k].set(v)
 
+            # стажування
+            self.load_internship_summary()
+            self.load_training_reminder()
+            self.load_vacation_note()
+
+
+
         except Exception as e:
             messagebox.showerror("Профіль", f"Не вдалося завантажити дані профілю: {e}")
 
@@ -231,7 +335,14 @@ class EmployeeMainWindow(ctk.CTk):
             self.docs_tree.delete(iid)
 
         # Якщо хочеш людську назву типу: можна підмінити тут або через JOIN документів і document_types
-        TYPE_LABELS = {"P1": "П-1: Прийняття на роботу"}  # тимчасова мапа
+        TYPE_LABELS = {
+            "P1": "П-1: Прийняття на роботу",
+            "P4": "П-4: Звільнення",
+            "INTERNSHIP_REFERRAL": "Направлення на стажування",
+            "TRAINING": "Підвищення кваліфікації", 
+            "VACATION": "Надання відпустки", 
+        }
+
         for r in rows:
             show_type = TYPE_LABELS.get(r.get("type"), r.get("type"))
             self.docs_tree.insert("", "end", values=(
@@ -239,7 +350,11 @@ class EmployeeMainWindow(ctk.CTk):
                 r.get("created_at") or "", r.get("signed_at") or ""
             ))
 
-
+        try:
+            self.load_training_reminder()
+            self.load_vacation_note()
+        except Exception:
+            pass
 
 
     def _open_with_default_app(self, path: str):
@@ -347,6 +462,106 @@ class EmployeeMainWindow(ctk.CTk):
 
         # --- шлях для тимчасового прев'ю ---
         out_path = TMP_DIR / f"emp_{employee_id:04d}_doc_{doc_id:06d}_preview.docx"
+
+
+        # --- НОРМАЛІЗАЦІЯ ДЛЯ TRAINING (прев'ю) ---
+        if doc_type == "TRAINING":
+            src = dict(context or {})
+            tr = dict((src.get("training") or {}))
+
+            # Дати: ДД.ММ.РРРР
+            ctx["order_date_str"] = fmt_dmy(src.get("order_date"))
+            s = fmt_dmy(tr.get("start_date"))
+            e = fmt_dmy(tr.get("end_date"))
+            tr["start_date_str"] = s
+            tr["end_date_str"]   = e
+            tr["period_str"]     = f"{s} — {e}" if (s and e) else (s or e or "")
+
+            # Підписані ярлики (щоб у шаблоні було просто підставити)
+            tr["format_label"]  = tr.get("format")  or ""
+            tr["mode_label"]    = tr.get("mode")    or ""
+            tr["funding_label"] = tr.get("funding") or ""
+
+            # Години / вартість
+            hours_raw = (tr.get("planned_hours") or "").strip()
+            tr["hours_str"] = f"{hours_raw} акад. год." if hours_raw else ""
+
+            cost_raw = (tr.get("estimated_cost") or "").strip()
+            tr["estimated_cost"] = cost_raw  # (якщо хочеш, додай ' грн' прямо в шаблоні)
+
+            # Повертаємо в контекст
+            ctx["training"] = tr
+
+        # --- Fallback для ПІБ керівника: payload -> DIRECTOR_FULL_NAME -> director_employee_id -> штатний директор ---
+        if not ctx.get("director_full_name"):
+            val = None
+            # 1) текстове налаштування (якщо комусь так зручніше)
+            try:
+                val = db.get_setting("DIRECTOR_FULL_NAME")
+            except Exception:
+                val = None
+            # 2) id працівника- директора → ПІБ з employees
+            if not val:
+                try:
+                    dir_id = db.get_setting("director_employee_id")
+                    if dir_id:
+                        row = db.fetch_one("""
+                            SELECT TRIM(
+                                COALESCE(last_name,'') || ' ' ||
+                                COALESCE(first_name,'') || 
+                                CASE WHEN IFNULL(middle_name,'')<>'' THEN ' '||middle_name ELSE '' END
+                            ) AS full_name
+                            FROM employees
+                            WHERE id = ?
+                        """, (dir_id,))
+                        val = (row or {}).get("full_name")
+                except Exception:
+                    pass
+            # 3) резервний спосіб (якщо реалізовано в db_manager)
+            if not val:
+                try:
+                    val = db.get_active_director_name()
+                except Exception:
+                    val = None
+            ctx["director_full_name"] = val or ""
+
+
+
+        # --- НОРМАЛІЗАЦІЯ ДЛЯ VACATION (прев'ю) ---
+        if doc_type == "VACATION":
+            src = dict(context or {})
+            vac = dict(src.get("vacation") or {})
+
+            # Дата наказу у формат ДД.ММ.РРРР (якщо використовуєш у шаблоні)
+            ctx["order_date_str"] = fmt_dmy(src.get("order_date"))
+
+            def _range_str(a, b):
+                a_str = fmt_dmy(a); b_str = fmt_dmy(b)
+                if a_str and b_str:
+                    return f"{a_str} — {b_str}"
+                return a_str or b_str or ""
+
+            # Періоди у зручних рядках
+            vac["work_period_str"] = _range_str(vac.get("work_period_from"), vac.get("work_period_to"))
+            vac["period_str"]      = _range_str(vac.get("start_date"),       vac.get("end_date"))
+
+            # Кількість днів + чекбокс матдопомоги
+            td = (vac.get("total_days") or "").strip()
+            vac["total_days_str"]    = f"{td} календарних днів" if td else ""
+            vac["material_aid_mark"] = "☑" if vac.get("material_aid") else "☐"
+            vac["work_period_start_str"] = fmt_dmy(vac.get("work_period_from"))
+            vac["work_period_end_str"]   = fmt_dmy(vac.get("work_period_to"))
+            vac["start_date_str"]        = fmt_dmy(vac.get("start_date"))
+            vac["end_date_str"]          = fmt_dmy(vac.get("end_date"))
+            vac["type_label"]            = vac.get("type") or ""
+            ctx["cb_health_aid"]         = "☑" if vac.get("material_aid") else "☐"
+            vac.setdefault("health_aid_amount", "")
+
+
+
+            # Повертаємо в контекст
+            ctx["vacation"] = vac
+
 
         # --- рендер ---
         from docxtpl import DocxTemplate
@@ -511,11 +726,108 @@ class EmployeeMainWindow(ctk.CTk):
             # 7) Директор (поки порожньо; можна підтягувати з налаштувань)
             ctx.setdefault("director_full_name", src.get("director_full_name", ""))
 
+            # --- НОРМАЛІЗАЦІЯ ДЛЯ TRAINING (фінальний рендер) ---
+            if doc_type == "TRAINING":
+                # беремо вихідний context і секцію training
+                src = dict(context or {})
+                tr = dict((src.get("training") or {}))
+
+                # форматування дат у ДД.ММ.РРРР
+                def _fmt(iso):
+                    if not iso:
+                        return ""
+                    try:
+                        d = datetime.strptime(iso, "%Y-%m-%d")
+                        return f"{d.day:02d}.{d.month:02d}.{d.year}"
+                    except Exception:
+                        return iso
+
+                # шапка наказу
+                ctx["order_date_str"] = _fmt(src.get("order_date"))
+
+                # період навчання
+                s = _fmt(tr.get("start_date"))
+                e = _fmt(tr.get("end_date"))
+                tr["start_date_str"] = s
+                tr["end_date_str"]   = e
+                tr["period_str"]     = f"{s} — {e}" if (s and e) else (s or e or "")
+
+                # підписані ярлики (щоб у шаблоні підставляти готові рядки)
+                tr["format_label"]  = tr.get("format")  or ""
+                tr["mode_label"]    = tr.get("mode")    or ""
+                tr["funding_label"] = tr.get("funding") or ""
+
+                # години / вартість (відображення як у прев’ю)
+                hours_raw = (tr.get("planned_hours") or "").strip()
+                tr["hours_str"] = f"{hours_raw} акад. год." if hours_raw else ""
+
+                cost_raw = (tr.get("estimated_cost") or "").strip()
+                tr["estimated_cost"] = cost_raw  # суфікс "грн" можна додати у шаблоні
+
+                # повертаємо секцію назад у контекст
+                ctx["training"] = tr
+
+            # --- НОРМАЛІЗАЦІЯ ДЛЯ VACATION (sign) ---
+            if doc_type == "VACATION":
+                vac = dict(src.get("vacation") or {})
+
+                # Дата наказу (якщо використовуєш у шаблоні)
+                ctx["order_date_str"] = fmt_dmy(src.get("order_date"))
+
+                # Періоди у форматі ДД.ММ.РРРР
+                vac["work_period_start_str"] = fmt_dmy(vac.get("work_period_from"))
+                vac["work_period_end_str"]   = fmt_dmy(vac.get("work_period_to"))
+                vac["start_date_str"]        = fmt_dmy(vac.get("start_date"))
+                vac["end_date_str"]          = fmt_dmy(vac.get("end_date"))
+
+                # Підписані ярлики/чекбокси
+                vac["type_label"]    = vac.get("type") or ""
+                ctx["cb_health_aid"] = "☑" if vac.get("material_aid") else "☐"
+                vac.setdefault("health_aid_amount", "")
+
+                # Повернути в контекст
+                ctx["vacation"] = vac
+
             # ---------- РЕНДЕР ФІНАЛЬНОГО DOCX ----------
             tpl_path = TEMPLATES_MAP.get(doc_type)
             if not tpl_path or not tpl_path.exists():
                 messagebox.showerror("Підпис", f"Не знайдено шаблон для типу '{doc_type}'.")
                 return
+
+
+            # --- Fallback для ПІБ керівника: payload -> DIRECTOR_FULL_NAME -> director_employee_id -> штатний директор ---
+            if not ctx.get("director_full_name"):
+                val = None
+                try:
+                    val = db.get_setting("DIRECTOR_FULL_NAME")
+                except Exception:
+                    val = None
+                if not val:
+                    try:
+                        dir_id = db.get_setting("director_employee_id")
+                        if dir_id:
+                            row = db.fetch_one("""
+                                SELECT TRIM(
+                                    COALESCE(last_name,'') || ' ' ||
+                                    COALESCE(first_name,'') || 
+                                    CASE WHEN IFNULL(middle_name,'')<>'' THEN ' '||middle_name ELSE '' END
+                                ) AS full_name
+                                FROM employees
+                                WHERE id = ?
+                            """, (dir_id,))
+                            val = (row or {}).get("full_name")
+                    except Exception:
+                        pass
+                if not val:
+                    try:
+                        val = db.get_active_director_name()
+                    except Exception:
+                        val = None
+                ctx["director_full_name"] = val or ""
+
+        
+
+
 
             from docxtpl import DocxTemplate
             out_path = DOCS_DIR / f"emp_{employee_id:04d}_doc_{doc_id:06d}_signed.docx"
@@ -530,6 +842,14 @@ class EmployeeMainWindow(ctk.CTk):
                 "file_docx=?, context_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 (signed_by, str(out_path), json.dumps(context, ensure_ascii=False), doc_id)
             )
+
+            # щоб блок «Стажування» оновився без натискання «Оновити»
+            try:
+                self.load_internship_summary()
+                self.load_training_reminder()
+                self.load_vacation_note()
+            except Exception:
+                pass
 
             # Після оновлення documents → signed
             if doc_type == "P4":
@@ -553,6 +873,8 @@ class EmployeeMainWindow(ctk.CTk):
                 try:
                     self.load_profile()   # статус, дати тощо
                     self.refresh_docs()   # список документів
+                    # (не обов'язково, але можна ще раз підстрахуватися)
+                    self.load_internship_summary()
                 except Exception:
                     pass
 
@@ -608,12 +930,287 @@ class EmployeeMainWindow(ctk.CTk):
 
 
 
+    # методи для стажування
+    def load_internship_summary(self):
+        """Підтягує останнє/активне стажування працівника і оновлює блок у профілі."""
+        self._internship_doc_id = None
+        try:
+            # Спершу пробуємо з вʼю 
+            row = db.fetch_one("""
+                SELECT *
+                FROM v_internships_full
+                WHERE employee_id = ?
+                ORDER BY (status='active') DESC, DATE(planned_end_date) DESC, internship_id DESC
+                LIMIT 1
+            """, (self.employee_id,))
+
+            # Якщо вʼю немає — fallback на джойни
+            if not row:
+                row = db.fetch_one("""
+                    SELECT i.id AS internship_id, i.start_date, i.planned_end_date, i.status, i.doc_id,
+                           m.last_name || ' ' || m.first_name ||
+                           CASE WHEN IFNULL(m.middle_name,'') <> '' THEN ' '||m.middle_name ELSE '' END AS mentor_full_name,
+                           md.name AS mentor_department_name,
+                           mp.name AS mentor_position_name,
+                           NULL AS document_status
+                    FROM internships i
+                    LEFT JOIN employees  m  ON m.id  = i.mentor_employee_id
+                    LEFT JOIN departments md ON md.id = m.department_id
+                    LEFT JOIN positions  mp ON mp.id  = m.position_id
+                    WHERE i.employee_id = ?
+                    ORDER BY (i.status='active') DESC, DATE(i.planned_end_date) DESC, i.id DESC
+                    LIMIT 1
+                """, (self.employee_id,))
+
+            def fmt(iso):
+                if not iso: return ""
+                from datetime import datetime
+                try:
+                    d = datetime.strptime(iso, "%Y-%m-%d")
+                    return f"{d.day:02d}.{d.month:02d}.{d.year}"
+                except Exception:
+                    return iso
+
+            if not row:
+                # нічого не знайдено
+                self._internship_vars["period"].set("—")
+                self._internship_vars["mentor"].set("—")
+                self._internship_vars["status"].set("—")
+                self.btn_preview_intern.configure(state="disabled")
+                return
+
+            # Період
+            self._internship_vars["period"].set(
+                f"{fmt(row.get('start_date'))} — {fmt(row.get('planned_end_date'))}"
+            )
+
+            # Наставник
+            mentor_line = row.get("mentor_full_name") or ""
+            extra = ", ".join(filter(None, [
+                row.get("mentor_department_name"),
+                row.get("mentor_position_name"),
+            ]))
+            if extra:
+                mentor_line = f"{mentor_line} ({extra})" if mentor_line else extra
+            self._internship_vars["mentor"].set(mentor_line or "—")
+
+            # Статус + статус документа
+            status = row.get("status") or "—"
+            doc_status = row.get("document_status") or None
+            if status == "active" and doc_status == "sent":
+                status_text = "активне • направлення очікує підпису"
+            elif doc_status == "signed":
+                status_text = f"{status} • направлення підписано"
+            else:
+                status_text = status
+            self._internship_vars["status"].set(status_text)
+
+            # Документ для кнопки "Переглянути"
+            self._internship_doc_id = row.get("doc_id")
+            self.btn_preview_intern.configure(
+                state=("normal" if self._internship_doc_id else "disabled")
+            )
+
+        except Exception as e:
+            self._internship_vars["period"].set("—")
+            self._internship_vars["mentor"].set("—")
+            self._internship_vars["status"].set(f"Помилка: {e}")
+            self.btn_preview_intern.configure(state="disabled")
+
+    def preview_internship_doc(self):
+        """Відкрити превʼю направлення на стажування (якщо є doc_id)."""
+        if not getattr(self, "_internship_doc_id", None):
+            messagebox.showwarning("Перегляд", "Немає прив'язаного документа.")
+            return
+        doc = db.get_document(self._internship_doc_id)
+        if not doc:
+            messagebox.showerror("Перегляд", "Документ не знайдено.")
+            return
+        try:
+            ctx = json.loads(doc.get("context_json") or "{}")
+        except Exception as e:
+            messagebox.showerror("Перегляд", f"Пошкоджений вміст документа: {e}")
+            return
+        try:
+            path = self._render_preview_docx(
+                doc_type=doc.get("type"),
+                context=ctx,
+                employee_id=int(doc.get("employee_id") or 0),
+                doc_id=int(doc.get("id") or 0),
+            )
+            self._open_with_default_app(path)
+        except Exception as e:
+            messagebox.showerror("Перегляд", f"Не вдалося згенерувати прев'ю: {e}")
+
+
+    def load_training_reminder(self):
+        """Шукає найближчий TRAINING (sent/signed) з майбутньою датою старту і показує компактну плашку."""
+        self._training_doc_id = None
+        try:
+            rows = db.fetch_all("""
+                SELECT id, type, status, context_json
+                FROM documents
+                WHERE employee_id = ?
+                  AND type = 'TRAINING'
+                  AND status IN ('sent','signed')
+                ORDER BY created_at DESC
+            """, (self.employee_id,))
+
+            from datetime import datetime, date
+            today = date.today()
+
+            best = None  # (doc, ctx, tr, start_date_obj)
+            for r in rows:
+                try:
+                    ctx = json.loads(r.get("context_json") or "{}")
+                except Exception:
+                    ctx = {}
+
+                tr = (ctx.get("training") or {}) if isinstance(ctx.get("training"), dict) else {}
+                s_iso = (tr.get("start_date") or "").strip()
+                if not s_iso:
+                    continue
+                try:
+                    s_dt = datetime.strptime(s_iso, "%Y-%m-%d").date()
+                except Exception:
+                    continue
+                # показуємо тільки майбутні/сьогоднішні
+                if s_dt >= today:
+                    if (best is None) or (s_dt < best[3]):
+                        best = (r, ctx, tr, s_dt)
+
+            if not best:
+                # немає що показувати
+                self.training_frame.grid_remove()
+                return
+
+            r, ctx, tr, s_dt = best
+            e_iso = (tr.get("end_date") or "").strip()
+
+            # форматування
+            def fmt(iso):
+                if not iso: return ""
+                try:
+                    d = datetime.strptime(iso, "%Y-%m-%d")
+                    return f"{d.day:02d}.{d.month:02d}.{d.year}"
+                except Exception:
+                    return iso
+
+            s_str = fmt(tr.get("start_date"))
+            e_str = fmt(tr.get("end_date"))
+
+            # заголовок
+            title = f"Підвищення кваліфікації: {tr.get('title','')}".strip()
+            self._tr_title_var.set(title or "Підвищення кваліфікації")
+
+            # мета-рядок
+            meta_bits = [tr.get("provider",""), tr.get("format",""), tr.get("place","")]
+            self._tr_meta_var.set(" • ".join([b for b in meta_bits if b]).strip(" •"))
+
+            # період + дні до старту
+            days_left = (s_dt - today).days
+            left_txt = f" • залишилось {days_left} дн." if days_left >= 0 else ""
+            period = f"{s_str}" + (f" — {e_str}" if e_str else "")
+            self._tr_period_var.set((period + left_txt).strip())
+
+            # бейдж статусу
+            badge = "Потрібен підпис" if (r.get("status") == "sent") else "Підтверджено"
+            self._tr_badge_var.set(badge)
+
+            # збережемо doc_id для кнопки
+            self._training_doc_id = r.get("id")
+
+            # показати плашку
+            self.training_frame.grid()
+
+        except Exception as e:
+            # у разі помилки просто сховаємо
+            self.training_frame.grid_remove()
+
+    def preview_training_doc(self):
+        """Відкрити превʼю TRAINING із плашки-нагадування."""
+        if not getattr(self, "_training_doc_id", None):
+            messagebox.showwarning("Перегляд", "Немає прив'язаного документа.")
+            return
+        doc = db.get_document(self._training_doc_id)
+        if not doc:
+            messagebox.showerror("Перегляд", "Документ не знайдено.")
+            return
+        try:
+            ctx = json.loads(doc.get("context_json") or "{}")
+        except Exception as e:
+            messagebox.showerror("Перегляд", f"Пошкоджений вміст документа: {e}")
+            return
+        try:
+            path = self._render_preview_docx(
+                doc_type=doc.get("type"),
+                context=ctx,
+                employee_id=int(doc.get("employee_id") or 0),
+                doc_id=int(doc.get("id") or 0),
+            )
+            self._open_with_default_app(path)
+        except Exception as e:
+            messagebox.showerror("Перегляд", f"Не вдалося згенерувати прев'ю: {e}")
+
+
+    def load_vacation_note(self):
+        """Показує коротке повідомлення у профілі, якщо працівник зараз у відпустці (за підписаним наказом VACATION)."""
+        import json
+        from datetime import date, datetime
+
+        # за замовчуванням ховаємо
+        self._vacation_note_var.set("")
+        try:
+            self.vacation_note.grid_remove()
+        except Exception:
+            pass
+
+        try:
+            rows = db.fetch_all("""
+                SELECT id, status, context_json
+                FROM documents
+                WHERE employee_id = ? AND type = 'VACATION' AND status = 'signed'
+                ORDER BY COALESCE(signed_at, created_at) DESC
+            """, (self.employee_id,))
+        except Exception:
+            rows = []
+
+        today = date.today()
+
+        for r in rows:
+            try:
+                ctx = r.get("context_json") or {}
+                if not isinstance(ctx, dict):
+                    ctx = json.loads(ctx)
+                vac = (ctx.get("vacation") or {})
+                s = vac.get("start_date")
+                e = vac.get("end_date")
+                if not (s and e):
+                    continue
+
+                sdt = datetime.strptime(s, "%Y-%m-%d").date()
+                edt = datetime.strptime(e, "%Y-%m-%d").date()
+
+                if sdt <= today <= edt:
+                    # формат дати ДД.ММ.РРРР
+                    def fmt(d): return f"{d.day:02d}.{d.month:02d}.{d.year}"
+                    days_left = (edt - today).days + 1
+                    vac_type = vac.get("type") or ""
+                    note = f"Зараз у відпустці{f' ({vac_type})' if vac_type else ''} до {fmt(edt)} • залишилось {days_left} дн."
+                    self._vacation_note_var.set(note)
+                    self.vacation_note.grid()   # показати рядок
+                    return
+            except Exception:
+                continue
+        # Якщо актуальної відпустки не знайшли — залишаємо прихованим
+
+
 
 
 if __name__ == "__main__":
     # Варіант А: дати тільки username — employee_id підтягнеться сам із таблиці users
     app = EmployeeMainWindow(current_user={
-        "username": "ivanov",   # ← заміни на логін твого працівника з таблиці users
+        "username": "lesia.romaniuk",   # ← заміни на логін твого працівника з таблиці users
         "role": "employee"
     })
     app.mainloop()

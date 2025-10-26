@@ -57,8 +57,10 @@ class P1CreateForm(ctk.CTkToplevel):
         row3 = ctk.CTkFrame(self.body); row3.pack(fill="x", pady=3)
         ctk.CTkLabel(row3, text="Відділення:").pack(side="left", padx=(0,6))
         self.dep_var = ctk.StringVar(value=dep_names[0] if dep_names else "")
-        self.dep_box = ctk.CTkComboBox(row3, values=dep_names, variable=self.dep_var, width=320,
-                                       command=lambda _=None: self._reload_positions())
+        self.dep_box = ctk.CTkComboBox(
+            row3, values=dep_names, variable=self.dep_var, width=320,
+            command=lambda _=None: (self._reload_positions(), self._reload_mentors())
+        )
         self.dep_box.pack(side="left", padx=(0,16))
 
         ctk.CTkLabel(row3, text="Посада:").pack(side="left", padx=(0,6))
@@ -69,6 +71,7 @@ class P1CreateForm(ctk.CTkToplevel):
         # початкове наповнення посад
         if dep_names:
             self._reload_positions()
+
 
         # ===== 2) Параметри наказу =====
         ctk.CTkLabel(self.body, text="Параметри наказу",
@@ -150,6 +153,33 @@ class P1CreateForm(ctk.CTkToplevel):
         self.salary_kop = ctk.CTkEntry(sal_row, placeholder_text="коп",      width=70);  self.salary_kop.pack(side="left", padx=(8,0))
 
 
+        # ===== Стажування (місяці + наставник) =====
+        ctk.CTkLabel(self.body, text="Стажування",
+                    font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", pady=(12,4))
+
+        intern_row = ctk.CTkFrame(self.body)
+        intern_row.pack(fill="x", pady=(0,6))
+
+        # Тривалість стажування, міс. (1–3, дефолт 3)
+        ctk.CTkLabel(intern_row, text="Тривалість (міс.):").pack(side="left", padx=(0,6))
+        self.intern_months = ctk.CTkEntry(intern_row, width=80)
+        self.intern_months.pack(side="left")
+        self.intern_months.insert(0, "3")
+
+        # Наставник — підвантажуємо за обраним відділенням
+        ment_row = ctk.CTkFrame(self.body)
+        ment_row.pack(fill="x", pady=(0,6))
+
+        ctk.CTkLabel(ment_row, text="Наставник:").pack(side="left", padx=(0,6))
+        self.mentor_name_var = ctk.StringVar(value="")
+        self.mentor_box = ctk.CTkComboBox(ment_row, values=[], variable=self.mentor_name_var, width=360)
+        self.mentor_box.pack(side="left")
+
+        # мапи id<->name формуватимемо під час _reload_mentors()
+        self._mentor_name_by_id = {}
+        self._mentor_id_by_name = {}
+        self._reload_mentors()
+
 
 
         # ===== Кнопки =====
@@ -169,6 +199,21 @@ class P1CreateForm(ctk.CTkToplevel):
             self.pos_var.set(names[0])
         else:
             self.pos_var.set("")
+
+    def _reload_mentors(self):
+        """Підтягнути наставників тільки з обраного відділення."""
+        dep_id = self.deps_map.get(self.dep_var.get())
+        ment_list = db.get_employee_brief_list_by_department(dep_id) if dep_id else []
+
+        self._mentor_name_by_id = {i: n for i, n in ment_list}
+        self._mentor_id_by_name = {n: i for i, n in ment_list}
+        mentor_names = [n for _, n in ment_list] or ["—"]
+
+        # оновлюємо комбобокс
+        self.mentor_box.configure(values=mentor_names)
+        # якщо список порожній — залишимо "—", це дасть mentor_employee_id = None у payload
+        self.mentor_name_var.set(mentor_names[0] if mentor_names else "—")
+
 
     def _validate(self):
         if not self.last_name.get().strip() or not self.first_name.get().strip():
@@ -255,7 +300,12 @@ class P1CreateForm(ctk.CTkToplevel):
             # плейсхолдери підпису працівника (щоб залишились у docx до моменту підпису)
             "employee_sign_day":   "{{ employee_sign_day }}",
             "employee_sign_month": "{{ employee_sign_month }}",
-            "employee_sign_year":  "{{ employee_sign_year }}"
+            "employee_sign_year":  "{{ employee_sign_year }}",
+
+            # === ДОДАНО ДЛЯ СТАЖУВАННЯ ===
+            "internship_months": self.intern_months.get().strip(),
+            "mentor_employee_id": self._mentor_id_by_name.get(self.mentor_name_var.get()),
+
         }
 
 
