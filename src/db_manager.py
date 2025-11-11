@@ -618,6 +618,35 @@ def get_next_vacation_order_number():
     next_seq = (row["max_seq"] if row else 0) + 1
     return f"{next_seq}/{y}"
 
+def get_next_attestation_order_number():
+    """
+    Наступний номер для наказу 'ATTESTATION' у форматі 'N/YYYY'
+    (рахуємо тільки в межах поточного року за даними documents.context_json → $.order_number).
+    """
+    y = date.today().year
+    row = fetch_one(
+        """
+        SELECT COALESCE(
+            MAX(
+                CAST(
+                    SUBSTR(
+                        json_extract(context_json, '$.order_number'),
+                        1,
+                        INSTR(json_extract(context_json, '$.order_number'), '/') - 1
+                    ) AS INTEGER
+                )
+            ),
+            0
+        ) AS max_seq
+        FROM documents
+        WHERE type = 'ATTESTATION'
+          AND json_extract(context_json, '$.order_number') LIKE ?
+        """,
+        (f'%/{y}',)
+    )
+    next_seq = (row["max_seq"] if row else 0) + 1
+    return f"{next_seq}/{y}"
+
 
 
 
@@ -774,3 +803,64 @@ def get_employee_brief_list_by_department(dep_id: int):
     """, (dep_id,))
     # уніфікуємо формат під [(id, name), ...]
     return [(r["id"], r["full_name"]) for r in rows]
+
+
+
+
+
+def add_attestation_plan_for_new_employee(employee_id: int, hire_date_iso: str | None, created_by: str):
+    """
+    Створює запис у attestations_plan:
+      - action='confirmation' (підтвердження)
+      - schedule='planned'    (планова)
+      - planned_date = hire_date + 5 років (або від сьогодні, якщо hire_date порожня)
+    Повертає id вставленого рядка.
+    """
+    if not hire_date_iso:
+        hire_date_iso = date.today().isoformat()
+
+    return execute_query("""
+        INSERT INTO attestations_plan
+            (employee_id, action, schedule, planned_date,
+             commission_name, commission_place, basis_text,
+             document_id, created_by)
+        VALUES (?, 'confirmation', 'planned', DATE(?, '+5 years'),
+                NULL, NULL, NULL,
+                NULL, ?)
+    """, (employee_id, hire_date_iso, created_by))
+
+
+# === Attestations: find due without document =================================
+def list_attestations_due_without_doc(days: int = 30):
+    """
+    Кого потрібно автоматично направити на атестацію:
+    - у плані немає document_id
+    - planned_date у діапазоні [сьогодні ; сьогодні + days]
+    - працівник активний
+    Повертає масив dict (поля з ap + ПІБ/посада/відділення).
+    """
+    return fetch_all("""
+        SELECT
+            ap.id,
+            ap.employee_id,
+            ap.action,
+            ap.schedule,
+            ap.planned_date,
+            IFNULL(ap.commission_name,'')  AS commission_name,
+            IFNULL(ap.commission_place,'') AS commission_place,
+            IFNULL(ap.basis_text,'')       AS basis_text,
+            -- мета по працівнику
+            (e.last_name || ' ' || e.first_name ||
+             CASE WHEN IFNULL(e.middle_name,'')<>'' THEN ' '||e.middle_name ELSE '' END
+            ) AS employee_name,
+            d.name AS department_name,
+            p.name AS position_name
+        FROM attestations_plan ap
+        JOIN employees e     ON e.id = ap.employee_id
+        LEFT JOIN departments d ON d.id = e.department_id
+        LEFT JOIN positions   p ON p.id = e.position_id
+        WHERE ap.document_id IS NULL
+          AND e.employment_status = 'активний'
+          AND DATE(ap.planned_date) BETWEEN DATE('now') AND DATE('now','+' || ? || ' day')
+        ORDER BY ap.planned_date ASC, employee_name ASC
+    """, (days,))

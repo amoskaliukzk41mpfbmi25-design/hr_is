@@ -12,6 +12,7 @@ TEMPLATES_MAP = {
     "INTERNSHIP_REFERRAL": Path("data/templates/internship_assignment.docx"),
     "TRAINING": Path("data/templates/training_referral.docx"),
     "VACATION": Path("data/templates/vacation_order.docx"), 
+    "ATTESTATION": Path("data/templates/attestation_referral.docx"), 
 }
 
 
@@ -166,7 +167,6 @@ class EmployeeMainWindow(ctk.CTk):
         self.vacation_note.grid_remove()  # поки що не показуємо
 
 
-
         # ==== Підвищення кваліфікації (нагадування) ====
         sep2 = ctk.CTkFrame(wrap, height=2)
         sep2.grid(row=rowi+1, column=0, columnspan=2, sticky="ew", padx=12, pady=(4,6))
@@ -175,6 +175,45 @@ class EmployeeMainWindow(ctk.CTk):
         self.training_frame.grid(row=rowi+2, column=0, columnspan=2, sticky="ew", padx=12, pady=(4, 12))
         self.training_frame.grid_columnconfigure(0, weight=1)
         self.training_frame.grid_remove()  # спочатку приховано
+
+
+
+        # >>> Атестація (нагадування) 
+        next_row = rowi + 4  # ставимо плашку нижче блоку TRAINING
+
+        sep3 = ctk.CTkFrame(wrap, height=2)
+        sep3.grid(row=next_row, column=0, columnspan=2, sticky="ew", padx=12, pady=(4,6))
+
+        self.attestation_frame = ctk.CTkFrame(wrap, corner_radius=8)
+        self.attestation_frame.grid(row=next_row+1, column=0, columnspan=2, sticky="ew", padx=12, pady=(4, 12))
+        self.attestation_frame.grid_columnconfigure(0, weight=1)
+        self.attestation_frame.grid_remove()  # спочатку приховуємо
+
+        top_att = ctk.CTkFrame(self.attestation_frame)
+        top_att.grid(row=0, column=0, sticky="ew", padx=10, pady=(8,4))
+        top_att.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(top_att, text="Атестація", font=ctk.CTkFont(size=14, weight="bold"))\
+            .grid(row=0, column=0, sticky="w")
+
+        self._att_main_var = ctk.StringVar(value="")
+        ctk.CTkLabel(self.attestation_frame, textvariable=self._att_main_var)\
+            .grid(row=1, column=0, sticky="w", padx=10)
+
+        self._att_meta_var = ctk.StringVar(value="")
+        ctk.CTkLabel(self.attestation_frame, textvariable=self._att_meta_var,
+                     text_color=("#6B7280", "#CBD5E1"))\
+            .grid(row=2, column=0, sticky="w", padx=10)
+
+        actions_att = ctk.CTkFrame(self.attestation_frame)
+        actions_att.grid(row=3, column=0, sticky="e", padx=10, pady=(4,10))
+        self.btn_preview_att = ctk.CTkButton(actions_att, text="Переглянути", width=160,
+                                             command=self.preview_attestation_doc)
+        self.btn_preview_att.pack(side="right", padx=(6,0))
+        self.btn_preview_att.configure(state="disabled")
+
+        self._att_doc_id = None
+
+
 
         # Заголовок і бейджик-статус
         top_tr = ctk.CTkFrame(self.training_frame)
@@ -305,7 +344,7 @@ class EmployeeMainWindow(ctk.CTk):
             self.load_internship_summary()
             self.load_training_reminder()
             self.load_vacation_note()
-
+            self.load_attestation_reminder()
 
 
         except Exception as e:
@@ -353,6 +392,7 @@ class EmployeeMainWindow(ctk.CTk):
         try:
             self.load_training_reminder()
             self.load_vacation_note()
+            self.load_attestation_reminder()
         except Exception:
             pass
 
@@ -524,6 +564,35 @@ class EmployeeMainWindow(ctk.CTk):
                 except Exception:
                     val = None
             ctx["director_full_name"] = val or ""
+
+
+        # --- НОРМАЛІЗАЦІЯ ДЛЯ ATTESTATION (прев'ю) ---
+        if doc_type == "ATTESTATION":
+            src = dict(context or {})
+            att = dict(src.get("attestation") or {})
+
+            # довгі ярлики від кодів (fallback, якщо з форми прийшли короткі)
+            long_by_action = {
+                "assignment":  "Присвоєння кваліфікаційної категорії",
+                "confirmation":"Підтвердження кваліфікаційної категорії",
+                "other":       "Інша дія (атестація)",
+            }
+            long_by_schedule = {
+                "planned":     "Чергова (планова) атестація",
+                "unscheduled": "Позачергова атестація",
+            }
+
+            # якщо у payload вже є *_label — лишаємо; інакше рахуємо з code
+            if not att.get("action_label"):
+                att["action_label"] = long_by_action.get(att.get("action"), att.get("action") or "")
+            if not att.get("schedule_label"):
+                att["schedule_label"] = long_by_schedule.get(att.get("schedule"), att.get("schedule") or "")
+
+            # форматування дат
+            ctx["order_date_str"] = ctx.get("order_date_str") or fmt_dmy(src.get("order_date"))
+            att["date_str"] = att.get("date_str") or fmt_dmy(att.get("date"))
+
+            ctx["attestation"] = att
 
 
 
@@ -767,6 +836,36 @@ class EmployeeMainWindow(ctk.CTk):
                 # повертаємо секцію назад у контекст
                 ctx["training"] = tr
 
+            
+            # --- НОРМАЛІЗАЦІЯ ДЛЯ ATTESTATION (sign) ---
+            if doc_type == "ATTESTATION":
+                src = dict(context or {})
+                att = dict(src.get("attestation") or {})
+
+                long_by_action = {
+                    "assignment":  "Присвоєння кваліфікаційної категорії",
+                    "confirmation":"Підтвердження кваліфікаційної категорії",
+                    "other":       "Інша дія (атестація)",
+                }
+                long_by_schedule = {
+                    "planned":     "Чергова (планова) атестація",
+                    "unscheduled": "Позачергова атестація",
+                }
+
+                if not att.get("action_label"):
+                    att["action_label"] = long_by_action.get(att.get("action"), att.get("action") or "")
+                if not att.get("schedule_label"):
+                    att["schedule_label"] = long_by_schedule.get(att.get("schedule"), att.get("schedule") or "")
+
+                # рядки дат
+                ctx["order_date_str"] = ctx.get("order_date_str") or fmt_dmy(src.get("order_date"))
+                att["date_str"] = att.get("date_str") or fmt_dmy(att.get("date"))
+
+                ctx["attestation"] = att
+
+
+
+
             # --- НОРМАЛІЗАЦІЯ ДЛЯ VACATION (sign) ---
             if doc_type == "VACATION":
                 vac = dict(src.get("vacation") or {})
@@ -848,6 +947,7 @@ class EmployeeMainWindow(ctk.CTk):
                 self.load_internship_summary()
                 self.load_training_reminder()
                 self.load_vacation_note()
+                self.load_attestation_reminder()
             except Exception:
                 pass
 
@@ -1127,6 +1227,90 @@ class EmployeeMainWindow(ctk.CTk):
             # у разі помилки просто сховаємо
             self.training_frame.grid_remove()
 
+
+
+    def load_attestation_reminder(self):
+        """Показує плашку атестації, якщо планова дата у [сьогодні; сьогодні+30 днів]."""
+        from datetime import datetime, date
+
+        # за замовчуванням ховаємо
+        self._att_doc_id = None
+        try:
+            self.attestation_frame.grid_remove()
+        except Exception:
+            pass
+
+        try:
+            row = db.fetch_one("""
+                SELECT id, planned_date, commission_name, commission_place, document_id
+                FROM attestations_plan
+                WHERE employee_id = ?
+                  AND schedule = 'planned'
+                  AND DATE(planned_date) BETWEEN DATE('now') AND DATE('now','+30 day')
+                ORDER BY planned_date ASC
+                LIMIT 1
+            """, (self.employee_id,))
+
+            if not row:
+                return  # немає актуальної атестації в горизонті 30 днів
+
+            # форматування дати
+            def fmt(iso):
+                if not iso:
+                    return ""
+                try:
+                    d = datetime.strptime(iso, "%Y-%m-%d").date()
+                    return f"{d.day:02d}.{d.month:02d}.{d.year}"
+                except Exception:
+                    return iso
+
+            planned_iso = row.get("planned_date") or ""
+            planned_dt  = datetime.strptime(planned_iso, "%Y-%m-%d").date()
+            today = date.today()
+            days_left = (planned_dt - today).days
+            if days_left < 0 or days_left > 30:
+                return  # на всяк випадок фільтр ще раз
+
+            # основний рядок
+            main_line = f"{fmt(planned_iso)} • залишилось {days_left} дн."
+            self._att_main_var.set(main_line)
+
+            # другий рядок: спершу комісія, якщо немає — місце, якщо й цього немає — порожньо
+            meta = (row.get("commission_name") or "").strip()
+            if not meta:
+                meta = (row.get("commission_place") or "").strip()
+            self._att_meta_var.set(meta)
+
+            # шукаємо doc_id (або з плану, або по контексту документа)
+            doc_id = row.get("document_id")
+            if not doc_id:
+                probe = db.fetch_one("""
+                    SELECT id
+                    FROM documents
+                    WHERE employee_id = ?
+                      AND type = 'ATTESTATION'
+                      AND status IN ('sent','signed')
+                      AND json_extract(context_json, '$.attestation.date') = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """, (self.employee_id, planned_iso))
+                doc_id = (probe or {}).get("id")
+
+            self._att_doc_id = doc_id
+            self.btn_preview_att.configure(state=("normal" if doc_id else "disabled"))
+
+            # показуємо плашку
+            self.attestation_frame.grid()
+
+        except Exception:
+            # у разі помилки — сховати
+            try:
+                self.attestation_frame.grid_remove()
+            except Exception:
+                pass
+
+
+
     def preview_training_doc(self):
         """Відкрити превʼю TRAINING із плашки-нагадування."""
         if not getattr(self, "_training_doc_id", None):
@@ -1151,6 +1335,40 @@ class EmployeeMainWindow(ctk.CTk):
             self._open_with_default_app(path)
         except Exception as e:
             messagebox.showerror("Перегляд", f"Не вдалося згенерувати прев'ю: {e}")
+
+
+
+    def preview_attestation_doc(self):
+        """Відкрити превʼю ATTESTATION із плашки-нагадування."""
+        if not getattr(self, "_att_doc_id", None):
+            messagebox.showwarning("Перегляд", "Немає прив'язаного документа.")
+            return
+
+        doc = db.get_document(self._att_doc_id)
+        if not doc:
+            messagebox.showerror("Перегляд", "Документ не знайдено.")
+            return
+        try:
+            ctx = doc.get("context_json") or {}
+            if not isinstance(ctx, dict):
+                import json
+                ctx = json.loads(ctx)
+        except Exception as e:
+            messagebox.showerror("Перегляд", f"Пошкоджений вміст документа: {e}")
+            return
+
+        try:
+            path = self._render_preview_docx(
+                doc_type=doc.get("type"),
+                context=ctx,
+                employee_id=int(doc.get("employee_id") or 0),
+                doc_id=int(doc.get("id") or 0),
+            )
+            self._open_with_default_app(path)
+        except Exception as e:
+            messagebox.showerror("Перегляд", f"Не вдалося згенерувати прев'ю: {e}")
+
+
 
 
     def load_vacation_note(self):
@@ -1210,7 +1428,7 @@ class EmployeeMainWindow(ctk.CTk):
 if __name__ == "__main__":
     # Варіант А: дати тільки username — employee_id підтягнеться сам із таблиці users
     app = EmployeeMainWindow(current_user={
-        "username": "lesia.romaniuk",   # ← заміни на логін твого працівника з таблиці users
+        "username": "lesia.romaniuk",   # замінити на логін працівника з таблиці users
         "role": "employee"
     })
     app.mainloop()

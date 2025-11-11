@@ -7,6 +7,7 @@ from tkinter import messagebox
 from documents_tab import DocumentsTab
 from p1_create_form import P1CreateForm
 from internships_tab import InternshipsTab
+from attestations_tab import AttestationsTab
 import json
 
 
@@ -123,14 +124,14 @@ class EmployeesTab(ctk.CTkFrame):
         actions_bar = ctk.CTkFrame(self, corner_radius=8)
         actions_bar.pack(fill="x", padx=10, pady=(0, 6))
 
-        self.btn_add = ctk.CTkButton(actions_bar, text="➕ Додати", width=120, state="disabled")
-        self.btn_add.pack(side="left", padx=6, pady=8)
+        # self.btn_add = ctk.CTkButton(actions_bar, text="➕ Додати", width=120, state="disabled")
+        # self.btn_add.pack(side="left", padx=6, pady=8)
 
         self.btn_edit = ctk.CTkButton(actions_bar, text="✏️ Редагувати", width=120, command=self.edit_selected)
         self.btn_edit.pack(side="left", padx=6, pady=8)
 
-        self.btn_delete = ctk.CTkButton(actions_bar, text="🗑 Видалити", width=120, state="disabled")
-        self.btn_delete.pack(side="left", padx=6, pady=8)
+        # self.btn_delete = ctk.CTkButton(actions_bar, text="🗑 Видалити", width=120, state="disabled")
+        # self.btn_delete.pack(side="left", padx=6, pady=8)
 
         # ---- Таблиця ----
         table_frame = ctk.CTkFrame(self, corner_radius=8)
@@ -458,7 +459,8 @@ class HRMainWindow(ctk.CTk):
         self.dashboard_tab = self.tabview.add("Головна")
         self.employees_tab = self.tabview.add("Працівники")
         self.internships_tab = self.tabview.add("Стажування")
-        self.directories_tab = self.tabview.add("Довідники")   # НОВЕ
+        self.attestations_tab = self.tabview.add("Атестації")
+        self.directories_tab = self.tabview.add("Довідники") 
         self.documents_tab = self.tabview.add("Документи")
         
 
@@ -475,6 +477,11 @@ class HRMainWindow(ctk.CTk):
         intern_tab = InternshipsTab(self.internships_tab)
         intern_tab.pack(fill="both", expand=True)
 
+        # Атестації
+        att_tab = AttestationsTab(self.attestations_tab)
+        att_tab.pack(fill="both", expand=True)
+
+
         # Довідники (нова split-view вкладка)
         dirs_tab = DirectoriesTab(self.directories_tab)
         dirs_tab.pack(fill="both", expand=True)
@@ -485,6 +492,9 @@ class HRMainWindow(ctk.CTk):
         docs_tab.pack(fill="both", expand=True)
         # 👉 колбек автооновлення вкладки "Працівники"
         docs_tab.on_employee_created = self.employees_view.load_data
+        # 👉 автооновлення вкладки "Атестації" після створення направлення
+        docs_tab.on_attestation_created = att_tab.refresh
+
 
         # ---- бейдж-числа на вкладках ----
         self._install_badge_updaters()
@@ -492,7 +502,7 @@ class HRMainWindow(ctk.CTk):
 
         # ---- АВТО-ЗАВЕРШЕННЯ ПРОСТРОЧЕНИХ СТАЖУВАНЬ ПРИ СТАРТІ ----
         try:
-            import db_manager as db  # якщо вже є імпорт угорі, цю стрічку можна прибрати
+            import db_manager as db  
             db.auto_complete_overdue()   # переведе overdue → completed (за нашою політикою)
             self.internships_view.refresh()  # оновимо таблицю після автозміни
         except Exception:

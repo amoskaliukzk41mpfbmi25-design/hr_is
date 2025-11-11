@@ -9,6 +9,7 @@ from p1_create_form import P1CreateForm
 from p4_create_form import P4CreateForm
 from training_referral_form import TrainingReferralForm
 from vacation_form import VacationForm
+from attestation_form import AttestationForm
 import string
 from secrets import choice
 
@@ -19,6 +20,8 @@ CRED_DIR.mkdir(parents=True, exist_ok=True)
 TEMPLATES_DIR = Path("data/templates")
 DOCS_DIR = Path("data/documents")
 DOCS_DIR.mkdir(parents=True, exist_ok=True)
+ATTESTATION_TEMPLATE = TEMPLATES_DIR / "attestation_referral.docx"
+
 
 MONTHS_GEN = [
     "", "січня","лютого","березня","квітня","травня","червня",
@@ -52,6 +55,7 @@ class DocumentsTab(ctk.CTkFrame):
         self.current_user = current_user  # {"username": "...", "role": "hr"}
         self._build_ui()
         self.refresh()
+        self.on_attestation_created = None
 
     # ---------- UI ----------
     def _build_ui(self):
@@ -103,6 +107,12 @@ class DocumentsTab(ctk.CTkFrame):
 
     # ---------- Data ops ----------
     def refresh(self):
+        # автогенерація направлень на атестацію (-30 днів)
+        try:
+            self.auto_create_due_attestations()
+        except Exception as e:
+            print(f"[warn] auto_create_due_attestations: {e}")
+
         for row in self.tree.get_children():
             self.tree.delete(row)
         query = self.search_var.get().strip()
@@ -154,7 +164,7 @@ class DocumentsTab(ctk.CTkFrame):
 
         ctk.CTkButton(
             menu, text="Атестація", width=300,
-            command=lambda: messagebox.showinfo("У розробці", "Форма створення направлення/подання на атестацію буде додана після підвищення кваліфікації.")
+            command=lambda: (menu.destroy(), self.open_create_attestation())
         ).pack(pady=6, padx=16, anchor="w")
 
         ctk.CTkButton(
@@ -181,7 +191,20 @@ class DocumentsTab(ctk.CTkFrame):
                 self.on_employee_created()
 
 
-            # --- [NEW] ПІБ підписанта (director_full_name) з app_settings ---
+            # План атестації +5 років від hire_date (або від сьогодні, якщо hire_date порожня)
+            try:
+                db.add_attestation_plan_for_new_employee(
+                    employee_id=emp_id,
+                    hire_date_iso=payload.get("hire_date"),
+                    created_by=(self.current_user or {}).get("username", "hr"),
+                )
+                # якщо маєш колбек для автооновлення вкладки "Атестації" — викличемо теж
+                if hasattr(self, "on_attestation_created") and callable(self.on_attestation_created):
+                    self.on_attestation_created()
+            except Exception as e:
+                print(f"[attestation-plan] warn: {e}")
+
+            # --- ПІБ підписанта (director_full_name) з app_settings ---
             director_full_name = ""
             try:
                 row_dir = db.fetch_one("SELECT value FROM app_settings WHERE key='director_employee_id'")
@@ -393,6 +416,133 @@ class DocumentsTab(ctk.CTkFrame):
         form.on_submit = on_submit
 
 
+    # ---------- [NEW] Автогенерація направлень на атестацію за 30 днів ----------
+    def auto_create_due_attestations(self, days: int = 30):
+        """
+        Створює документи 'ATTESTATION' для всіх записів у плані,
+        у яких planned_date настане впродовж days днів і document_id ще NULL.
+        """
+        try:
+            due_rows = db.list_attestations_due_without_doc(days)
+        except Exception as ex:
+            # тихо пропускаємо — не заважати роботі вкладки
+            return
+
+        if not due_rows:
+            return
+
+        # довгі підписи (для шаблону)
+        LONG_ACTION = {
+            "assignment":  "Присвоєння кваліфікаційної категорії",
+            "confirmation":"Підтвердження кваліфікаційної категорії",
+            "other":       "Інша дія (атестація)",
+        }
+        LONG_SCHEDULE = {
+            "planned":     "Чергова (планова) атестація",
+            "unscheduled": "Позачергова атестація",
+        }
+
+        created = 0
+        username = (getattr(self, "current_user", None) or {}).get("username", "hr")
+
+        for r in due_rows:
+            try:
+                emp_id = int(r["employee_id"])
+                emp_min = db.get_employee_min(emp_id)
+
+                # реквізити наказу
+                order_no = db.get_next_attestation_order_number() if hasattr(db, "get_next_attestation_order_number") else ""
+                order_date_iso = date.today().isoformat()
+
+                # секція "attestation"
+                action_code   = (r.get("action") or "confirmation")
+                schedule_code = (r.get("schedule") or "planned")
+                planned_iso   = (r.get("planned_date") or order_date_iso)
+
+                # довгі ярлики для шаблону
+                action_label_long   = LONG_ACTION.get(action_code, action_code)
+                schedule_label_long = LONG_SCHEDULE.get(schedule_code, schedule_code)
+
+                # якщо поля комісії/місця/підстави порожні — дефолти
+                commission_name  = (r.get("commission_name")  or "Атестаційна комісія закладу охорони здоров’я")
+                commission_place = (r.get("commission_place") or "Заклад охорони здоров’я (адреса)")
+                basis_text       = (r.get("basis_text")       or "Відповідно до внутрішнього графіку планової атестації")
+
+                # малий формат дати
+                def ddmmyyyy(iso):
+                    try:
+                        from datetime import datetime
+                        d = datetime.strptime(iso, "%Y-%m-%d").date()
+                        return f"{d.day:02d}.{d.month:02d}.{d.year}"
+                    except Exception:
+                        return iso or ""
+
+                context = {
+                    "order_number":   order_no,
+                    "order_date":     order_date_iso,
+                    "order_date_str": ddmmyyyy(order_date_iso),
+
+                    "employee": emp_min,
+
+                    "attestation": {
+                        "action": action_code,
+                        "action_label": action_label_long,
+                        "schedule": schedule_code,
+                        "schedule_label": schedule_label_long,
+                        "date": planned_iso,
+                        "date_str": ddmmyyyy(planned_iso),
+                        "commission_place": commission_place,
+                        "commission_name":  commission_name,
+                        "basis_text":       basis_text,
+                    },
+
+                    # директор підтягнеться при рендері з налаштувань (fallback’и уже є у вікнах працівника),
+                    # але для надійності можна й тут спробувати:
+                    "director_full_name": (db.get_setting("DIRECTOR_FULL_NAME") or ""),
+                    "employee_sign_day":   "",
+                    "employee_sign_month": "",
+                    "employee_sign_year":  "",
+                }
+
+                # створити документ + прев’ю зі статусом 'sent'
+                if not ATTESTATION_TEMPLATE.exists():
+                    # якщо шаблон відсутній — пропустити цей запис
+                    continue
+
+                doc_id, _ = db.create_document_with_preview(
+                    employee_id   = emp_id,
+                    doc_type      = "ATTESTATION",
+                    title         = f"Направлення на атестацію: {emp_min.get('last_name','')} {emp_min.get('first_name','')}",
+                    context       = context,
+                    created_by    = username,
+                    template_path = str(ATTESTATION_TEMPLATE),
+                    out_dir       = str(DOCS_DIR),
+                    status_on_create = "sent",
+                )
+
+                # зв’язати документ із планом
+                db.execute_query("UPDATE attestations_plan SET document_id = ? WHERE id = ?", (doc_id, r["id"]))
+                created += 1
+
+            except Exception:
+                # не валимо весь процес через один запис
+                continue
+
+        if created:
+            # хай оновиться таб «Атестації», якщо підв’язаний колбек
+            if hasattr(self, "on_attestation_created") and callable(self.on_attestation_created):
+                try:
+                    self.on_attestation_created()
+                except Exception:
+                    pass
+            # і список документів теж освіжимо
+            try:
+                self.refresh()
+            except Exception:
+                pass
+
+
+
 
     def open_create_p4(self):
         """Вікно П-4: створюємо документ для існуючого працівника."""
@@ -561,3 +711,130 @@ class DocumentsTab(ctk.CTkFrame):
             messagebox.showinfo("Готово", "Наказ про відпустку створено і відправлено на підпис.")
 
         form.on_submit = on_submit
+
+
+    def open_create_attestation(self):
+        """Вікно: Направлення на атестацію."""
+        form = AttestationForm(self)
+
+        def _to_ddmmyyyy(iso: str) -> str:
+            from datetime import datetime
+            if not iso:
+                return ""
+            return datetime.strptime(iso, "%Y-%m-%d").strftime("%d.%m.%Y")
+
+        ACTION_LABEL = {
+            "assignment":  "Присвоєння кваліфікаційної категорії",
+            "confirmation": "Підтвердження кваліфікаційної категорії",
+            "other":        "Інша дія (атестація)",
+        }
+        SCHEDULE_LABEL = {
+            "planned":     "Чергова (планова) атестація",
+            "unscheduled": "Позачергова атестація",
+        }
+
+
+        def on_submit(emp_id: int, payload: dict):
+            # ---- будуємо context рівно під твій шаблон ----
+            emp = payload.get("employee") or db.get_employee_min(emp_id)
+            att = payload.get("attestation", {})  # action, schedule, date, commission_name/place, basis_text
+
+            # директор (як у TRAINING/VACATION/P4)
+            director_full_name = db.get_setting("DIRECTOR_FULL_NAME") or ""
+            try:
+                dir_id = db.get_setting("director_employee_id")
+                if dir_id:
+                    row = db.fetch_one("""
+                        SELECT TRIM(
+                            COALESCE(last_name,'') || ' ' || COALESCE(first_name,'') ||
+                            CASE WHEN IFNULL(middle_name,'')<>'' THEN ' '||middle_name ELSE '' END
+                        ) AS full_name
+                        FROM employees WHERE id = ?
+                    """, (dir_id,))
+                    if row and row.get("full_name"):
+                        director_full_name = row["full_name"]
+            except Exception:
+                pass
+
+            context = {
+                "order_number":  payload.get("order_number", ""),
+                "order_date":    payload.get("order_date", ""),
+                "order_date_str": _to_ddmmyyyy(payload.get("order_date", "")),
+
+                "employee": emp,
+
+                "attestation": {
+                    "action":           att.get("action", ""),
+                    "action_label":     ACTION_LABEL.get(att.get("action", ""), att.get("action", "")),
+                    "schedule":         att.get("schedule", ""),
+                    "schedule_label":   SCHEDULE_LABEL.get(att.get("schedule", ""), att.get("schedule", "")),
+                    "date":             att.get("date", ""),
+                    "date_str":         _to_ddmmyyyy(att.get("date", "")),
+                    "commission_place": att.get("commission_place", "") or "",
+                    "commission_name":  att.get("commission_name", "") or "",
+                    "basis_text":       att.get("basis_text", "") or "",
+                },
+
+                "director_full_name":   director_full_name,
+                "employee_sign_day":    "",
+                "employee_sign_month":  "",
+                "employee_sign_year":   "",
+            }
+
+            # ---- 1) документ 'ATTESTATION' (sent) ----
+            import json
+            title = f"Направлення на атестацію: {emp.get('last_name','')} {emp.get('first_name','')}"
+            doc_id = db.execute_query(
+                """
+                INSERT INTO documents(type, employee_id, status, title, context_json, created_by)
+                VALUES ('ATTESTATION', ?, 'sent', ?, ?, ?)
+                """,
+                (
+                    emp_id,
+                    title,
+                    json.dumps(context, ensure_ascii=False),
+                    (self.current_user or {}).get("username", "hr"),
+                )
+            )
+
+            # ---- 2) історія payload (опційно) ----
+            try:
+                db.execute_query(
+                    "INSERT INTO document_payloads(document_id, payload_json) VALUES (?, ?)",
+                    (doc_id, json.dumps(context, ensure_ascii=False))
+                )
+            except Exception:
+                pass
+
+            # ---- 3) запис у план атестацій ----
+            db.execute_query(
+                """
+                INSERT INTO attestations_plan
+                    (employee_id, action, schedule, planned_date,
+                    commission_name, commission_place, basis_text,
+                    document_id, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    emp_id,
+                    att.get("action") or "other",
+                    att.get("schedule") or "planned",
+                    att.get("date") or db.today_iso(),
+                    att.get("commission_name") or "",
+                    att.get("commission_place") or "",
+                    att.get("basis_text") or "",
+                    doc_id,
+                    (self.current_user or {}).get("username", "hr"),
+                )
+            )
+
+            if hasattr(self, "on_attestation_created") and callable(self.on_attestation_created):
+                self.on_attestation_created()
+
+            # ---- 4) оновлюємо таблицю документів ----
+            self.refresh()
+            from tkinter import messagebox
+            messagebox.showinfo("Готово", "Направлення на атестацію створено і відправлено на підпис.")
+
+        form.on_submit = on_submit
+
