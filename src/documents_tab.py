@@ -274,6 +274,54 @@ class DocumentsTab(ctk.CTkFrame):
                 (mentor_min or {}).get("middle_name", ""),
             ])).strip()
 
+
+            # --- керівник відділення для цього працівника (якщо є) ---
+            dept_head = None
+            dept_head_full_name = ""
+            dept_head_emp_id = None
+            try:
+                # очікуємо, що в db_manager є функція get_department_head_for_employee(employee_id)
+                dept_head = db.get_department_head_for_employee(emp_id)
+            except Exception:
+                dept_head = None
+
+            if dept_head:
+                dept_head_emp_id = dept_head.get("id")
+                dept_head_full_name = " ".join(filter(None, [
+                    dept_head.get("last_name", ""),
+                    dept_head.get("first_name", ""),
+                    dept_head.get("middle_name", ""),
+                ])).strip()
+
+
+            # --- керівник структурного підрозділу для цього працівника ---
+            dept_head_full_name = ""
+            dept_head_id = None
+            try:
+                row_head = db.fetch_one("""
+                    SELECT 
+                        e.id AS id,
+                        TRIM(
+                            COALESCE(e.last_name,'') || ' ' || COALESCE(e.first_name,'') ||
+                            CASE WHEN IFNULL(e.middle_name,'')<>'' THEN ' '||e.middle_name ELSE '' END
+                        ) AS full_name
+                    FROM employees e
+                    JOIN positions p ON p.id = e.position_id
+                    WHERE e.department_id = (
+                        SELECT department_id FROM employees WHERE id = ?
+                    )
+                      AND p.name = 'Завідувач відділення'
+                      AND (e.employment_status IS NULL OR e.employment_status <> 'звільнений')
+                    LIMIT 1
+                """, (emp_id,))
+                if row_head:
+                    dept_head_id = row_head.get("id")
+                    dept_head_full_name = (row_head.get("full_name") or "").strip()
+            except Exception:
+                pass
+
+
+
             # --- контекст рівно з тими ключами, що в твоєму шаблоні internship_assignment.docx ---
             context_int = {
                 # шапка наказу
@@ -304,11 +352,21 @@ class DocumentsTab(ctk.CTkFrame):
                 "mentor_department_name": (mentor_min or {}).get("department_name", "") if mentor_min else "",
                 "mentor_position":        (mentor_min or {}).get("position_name", "") if mentor_min else "",
 
+                # ==== КЕРІВНИК ВІДДІЛЕННЯ ====
+                "dept_head_employee_id": dept_head_id,
+                "dept_head_full_name":   dept_head_full_name or "",
+
                 # підписи (до моменту підпису порожньо)
                 "director_full_name": director_full_name,
                 "employee_sign_day":   "",
                 "employee_sign_month": "",
                 "employee_sign_year":  "",
+
+                # дата підпису заввідділення — поки порожні, заповнимо при підписі
+                "dept_head_sign_day":   "",
+                "dept_head_sign_month": "",
+                "dept_head_sign_year":  "",
+
             }
 
 

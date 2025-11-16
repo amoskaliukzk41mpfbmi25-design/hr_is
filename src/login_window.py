@@ -94,6 +94,11 @@ def do_login():
             current_user={"username": username, "role": role, "employee_id": employee_id}
         ).mainloop()
 
+    elif role == "dept_head":
+        from dept_head_main_window import DeptHeadMainWindow
+        DeptHeadMainWindow(
+            current_user={"username": username, "role": role, "employee_id": employee_id}
+        ).mainloop()
 
     else:
         messagebox.showwarning("Обмеження доступу",

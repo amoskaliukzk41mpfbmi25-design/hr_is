@@ -864,3 +864,404 @@ def list_attestations_due_without_doc(days: int = 30):
           AND DATE(ap.planned_date) BETWEEN DATE('now') AND DATE('now','+' || ? || ' day')
         ORDER BY ap.planned_date ASC, employee_name ASC
     """, (days,))
+
+
+
+
+
+
+def get_department_head_by_department(department_id: int):
+    """
+    Повертає dict з даними завідувача відділення (id, full_name) для заданого department_id
+    або None, якщо не знайдено.
+    """
+    if not department_id:
+        return None
+
+    row = fetch_one("""
+        SELECT 
+            e.id,
+            TRIM(
+                COALESCE(e.last_name, '') || ' ' ||
+                COALESCE(e.first_name, '') || ' ' ||
+                COALESCE(e.middle_name, '')
+            ) AS full_name
+        FROM employees e
+        JOIN positions p ON p.id = e.position_id
+        WHERE e.department_id = ?
+          AND p.name = 'Завідувач відділення'
+          AND (e.employment_status IS NULL OR e.employment_status <> 'звільнений')
+        ORDER BY e.id
+        LIMIT 1
+    """, (department_id,))
+
+    return row  # або None
+
+def get_department_head_for_employee(employee_id: int):
+    """
+    Повертає dict з даними завідувача відділення для конкретного працівника:
+    { "id": ..., "full_name": ... } або None.
+    """
+    if not employee_id:
+        return None
+
+    emp = fetch_one("""
+        SELECT department_id
+        FROM employees
+        WHERE id = ?
+    """, (employee_id,))
+    if not emp or not emp.get("department_id"):
+        return None
+
+    return get_department_head_by_department(emp["department_id"])
+
+def get_internship_evaluations(internship_id: int):
+    return fetch_all(
+        """
+        SELECT *
+        FROM internship_evaluations
+        WHERE internship_id = ?
+        ORDER BY period_no ASC, created_at ASC
+        """,
+        (internship_id,)
+    )
+
+def save_internship_evaluation(
+    internship_id: int,
+    period_no: int,
+    data: dict,
+    created_by: str | None = None,
+) -> int:
+    """
+    Створює або оновлює оцінку за конкретний період стажування.
+
+    Очікує, що в data МАЮТЬ/МОЖУТЬ бути ключі:
+      - period_start (YYYY-MM-DD або None)
+      - period_end   (YYYY-MM-DD або None)
+      - score_professional
+      - score_discipline
+      - score_communication
+      - score_growth
+      - total_score
+      - recommendation
+      - comment
+
+    Повертає id запису в internship_evaluations.
+    """
+    created_by = created_by or "dept_head"
+
+    # Перевіряємо, чи вже є запис для цього стажування та періоду
+    row = fetch_one(
+        """
+        SELECT id
+        FROM internship_evaluations
+        WHERE internship_id = ? AND period_no = ?
+        """,
+        (internship_id, period_no)
+    )
+
+    params = {
+        "internship_id":      internship_id,
+        "period_no":          period_no,
+        "period_start":       data.get("period_start"),
+        "period_end":         data.get("period_end"),
+        "score_professional": data.get("score_professional"),
+        "score_discipline":   data.get("score_discipline"),
+        "score_communication": data.get("score_communication"),
+        "score_growth":       data.get("score_growth"),
+        "total_score":        data.get("total_score"),
+        "recommendation":     data.get("recommendation") or "",
+        "comment":            data.get("comment") or "",
+        "created_by":         created_by,
+    }
+
+    if row:
+        # UPDATE існуючого запису (created_at/created_by не чіпаємо)
+        eval_id = row["id"]
+        execute_query(
+            """
+            UPDATE internship_evaluations
+            SET
+                period_start        = :period_start,
+                period_end          = :period_end,
+                score_professional  = :score_professional,
+                score_discipline    = :score_discipline,
+                score_communication = :score_communication,
+                score_growth        = :score_growth,
+                total_score         = :total_score,
+                recommendation      = :recommendation,
+                comment             = :comment
+            WHERE id = ?
+            """,
+            {**params, "id": eval_id}
+        )
+        return eval_id
+    else:
+        # INSERT нового запису
+        eval_id = execute_query(
+            """
+            INSERT INTO internship_evaluations (
+                internship_id,
+                period_no,
+                period_start,
+                period_end,
+                score_professional,
+                score_discipline,
+                score_communication,
+                score_growth,
+                total_score,
+                recommendation,
+                comment,
+                created_by
+            ) VALUES (
+                :internship_id,
+                :period_no,
+                :period_start,
+                :period_end,
+                :score_professional,
+                :score_discipline,
+                :score_communication,
+                :score_growth,
+                :total_score,
+                :recommendation,
+                :comment,
+                :created_by
+            )
+            """,
+            params
+        )
+        return eval_id
+
+
+# === Internship evaluation helpers ===
+
+def _get_internship_formula_defaults():
+    # дефолтні ваги та пороги; згодом зʼєднаємо з app_settings
+    return {
+        "weights": {
+            "professional": 0.40,
+            "discipline":   0.25,
+            "communication":0.20,
+            "growth":       0.15,
+        },
+        "thresholds": {
+            "hire":   75.0,
+            "extend": 60.0,
+        }
+    }
+
+def calc_internship_total_and_recommendation(score_prof, score_disc, score_comm, score_growth):
+    # можна буде зчитувати з app_settings; зараз дефолти
+    cfg = _get_internship_formula_defaults()
+    w = cfg["weights"]; thr = cfg["thresholds"]
+
+    # шкала 1..5 → нормалізуємо до 100
+    total = 100.0 * (
+        w["professional"] * float(score_prof) +
+        w["discipline"]   * float(score_disc) +
+        w["communication"]* float(score_comm) +
+        w["growth"]       * float(score_growth)
+    ) / 5.0
+    total = round(total, 2)
+
+    if total >= thr["hire"]:
+        rec = "hire"
+    elif total >= thr["extend"]:
+        rec = "extend"
+    else:
+        rec = "deny"
+    return total, rec
+
+
+def upsert_internship_evaluation(
+    internship_id: int,
+    period_no: int,
+    score_professional: float,
+    score_discipline: float,
+    score_communication: float,
+    score_growth: float,
+    comment: str | None,
+    created_by: str | None,
+    period_start: str | None = None,   # YYYY-MM-DD
+    period_end: str | None = None      # YYYY-MM-DD
+) -> int:
+    """Створити або оновити оцінку за період. Повертає id запису."""
+    total, rec = calc_internship_total_and_recommendation(
+        score_professional, score_discipline, score_communication, score_growth
+    )
+
+    existing = fetch_one(
+        "SELECT id FROM internship_evaluations WHERE internship_id = ? AND period_no = ?",
+        (internship_id, period_no)
+    )
+
+    if existing and existing.get("id"):
+        eval_id = int(existing["id"])
+        execute_query(
+            """
+            UPDATE internship_evaluations
+            SET period_start = :period_start,
+                period_end   = :period_end,
+                score_professional  = :sp,
+                score_discipline    = :sd,
+                score_communication = :sc,
+                score_growth        = :sg,
+                total_score         = :total,
+                recommendation      = :rec,
+                comment             = :comment
+            WHERE id = :id
+            """,
+            {
+                "period_start": period_start,
+                "period_end":   period_end,
+                "sp": score_professional,
+                "sd": score_discipline,
+                "sc": score_communication,
+                "sg": score_growth,
+                "total": total,
+                "rec": rec,
+                "comment": comment or "",
+                "id": eval_id,
+            }
+        )
+        return eval_id
+    else:
+        return execute_query(
+            """
+            INSERT INTO internship_evaluations(
+                internship_id, period_no, period_start, period_end,
+                score_professional, score_discipline, score_communication, score_growth,
+                total_score, recommendation, comment, created_by
+            ) VALUES (
+                :internship_id, :period_no, :period_start, :period_end,
+                :sp, :sd, :sc, :sg,
+                :total, :rec, :comment, :created_by
+            )
+            """,
+            {
+                "internship_id": internship_id,
+                "period_no": period_no,
+                "period_start": period_start,
+                "period_end":   period_end,
+                "sp": score_professional,
+                "sd": score_discipline,
+                "sc": score_communication,
+                "sg": score_growth,
+                "total": total,
+                "rec": rec,
+                "comment": comment or "",
+                "created_by": created_by or "",
+            }
+        )
+
+
+
+
+
+
+def get_internship_employee_id(internship_id: int) -> int | None:
+    row = fetch_one("SELECT employee_id FROM internships WHERE id = ?", (internship_id,))
+    return int(row["employee_id"]) if row and row.get("employee_id") is not None else None
+
+
+def outcome_hire(internship_id: int,
+                 decided_by: str,
+                 final_score: float | None,
+                 final_recommendation: str | None,
+                 comment: str | None = None):
+    """
+    Завершити стажування позитивно: позначити internship як 'completed',
+    зафіксувати outcome; статус працівника гарантуємо 'активний'.
+    """
+    emp_id = get_internship_employee_id(internship_id)
+    if emp_id is None:
+        raise RuntimeError("Не знайдено працівника для стажування.")
+
+    # 1) статус стажування -> completed
+    execute_query(
+        "UPDATE internships SET status='completed', updated_at=CURRENT_TIMESTAMP WHERE id = ?",
+        (internship_id,)
+    )
+
+    # 2) статус працівника (на всяк випадок гарантуємо 'активний')
+    execute_query(
+        "UPDATE employees SET employment_status = 'активний' WHERE id = ?",
+        (emp_id,)
+    )
+
+    # 3) журнал outcome
+    execute_query(
+        """
+        INSERT INTO internship_outcomes
+            (internship_id, decision, final_total_score, final_recommendation, comment, decided_by)
+        VALUES (?, 'hire', ?, ?, ?, ?)
+        """,
+        (internship_id, final_score, final_recommendation, comment, decided_by)
+    )
+
+
+def outcome_decline(internship_id: int,
+                    decided_by: str,
+                    final_score: float | None,
+                    final_recommendation: str | None,
+                    comment: str | None = None):
+    """
+    Завершити стажування відмовою: internship -> 'completed',
+    працівника позначити 'звільнений', зафіксувати outcome.
+    """
+    emp_id = get_internship_employee_id(internship_id)
+    if emp_id is None:
+        raise RuntimeError("Не знайдено працівника для стажування.")
+
+    execute_query(
+        "UPDATE internships SET status='completed', updated_at=CURRENT_TIMESTAMP WHERE id = ?",
+        (internship_id,)
+    )
+
+    execute_query(
+        "UPDATE employees SET employment_status = 'звільнений' WHERE id = ?",
+        (emp_id,)
+    )
+
+    execute_query(
+        """
+        INSERT INTO internship_outcomes
+            (internship_id, decision, final_total_score, final_recommendation, comment, decided_by)
+        VALUES (?, 'decline', ?, ?, ?, ?)
+        """,
+        (internship_id, final_score, final_recommendation, comment, decided_by)
+    )
+
+
+def outcome_extend(internship_id: int,
+                   months_to_add: int,
+                   decided_by: str,
+                   comment: str | None = None):
+    """
+    Подовжити стажування на N місяців: збільшити i.months, пересунути planned_end_date,
+    outcome = 'extend'. Статус лишається 'active'.
+    """
+    if months_to_add <= 0:
+        raise ValueError("Кількість місяців для подовження має бути > 0.")
+
+    # 1) збільшуємо months і зміщуємо дату завершення
+    execute_query(
+        """
+        UPDATE internships
+        SET months = COALESCE(months,0) + :add,
+            planned_end_date = DATE(planned_end_date, '+' || :add || ' months'),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = :iid
+        """,
+        {"add": months_to_add, "iid": internship_id}
+    )
+
+    # 2) журнал outcome
+    execute_query(
+        """
+        INSERT INTO internship_outcomes
+            (internship_id, decision, extend_months, comment, decided_by)
+        VALUES (?, 'extend', ?, ?, ?)
+        """,
+        (internship_id, months_to_add, comment, decided_by)
+    )
